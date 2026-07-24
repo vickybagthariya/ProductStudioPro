@@ -1,0 +1,19 @@
+Product Studio / Product Photo Studio Pro — App Store Publishing Guide
+
+1) Open ProductStudioPro.xcodeproj in Xcode.
+2) Select the app target → Signing & Capabilities.
+3) Select your PAID Apple Developer Team.
+4) Set Bundle Identifier to the exact App Store Connect identifier you create, for example:
+   com.vickybagthariya.productphotostudiopro
+5) Confirm the iPhone home-screen app name is Product Studio.
+6) Test on a real iPhone: Product → Run.
+7) Archive for App Store: Product → Archive.
+8) In Organizer, select the archive → Distribute App → App Store Connect → Upload.
+9) In App Store Connect, create/complete the app record: privacy, screenshots, description, support URL, privacy policy URL, age rating, and submit for review.
+
+Suggested App Store metadata:
+App Name: Product Studio
+Subtitle: UPC product photo capture
+Category: Productivity or Business
+Keywords: product photo, UPC, barcode, inventory, ecommerce, catalog, batch capture
+Suggested review notes: This app helps businesses capture product images, scan UPC barcodes, name files for catalog/ERP workflows, batch queue images, and share/export photos and CSV files. Camera access is used only for product photos and barcode scanning. Photos are shared/exported only when the user chooses to do so. Optional Markup (PencilKit) lets users draw on a preview and add styled text (bold/italic/underline/strikethrough, fonts, colors); all pixels stay on-device. After Markup, the user taps Save to merge into the preview and Apply on the main preview to persist to the queue item. Styles and auto-enhance use Core Image on-device; they are not the private Apple Photos engine.

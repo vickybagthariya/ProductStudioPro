@@ -1,0 +1,24 @@
+# Xcode / build
+DerivedData/
+.derivedData/
+.derived_build/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Local secrets (never commit API keys)
+ProductStudioPro/Config/Secrets.local.xcconfig
+
+# Python / Pillow build helpers
+.build_pillow/
+.pillow_deps/
+scripts/__pycache__/
+**/__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

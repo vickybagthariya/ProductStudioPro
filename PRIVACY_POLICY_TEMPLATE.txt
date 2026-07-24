@@ -1,0 +1,31 @@
+Privacy Policy Template — Product Studio
+
+Product Studio uses the camera to capture product photos and scan barcodes. Catalog
+processing (background removal, polish, styles, markup, and export) runs on the
+user's device.
+
+Data stored on the device:
+- Product photos captured or imported by the user
+- Barcode/UPC values scanned or manually entered by the user
+- Local settings such as image quality, branding, and capture options
+- Optional brand-mark logo chosen by the user
+
+Optional network use (only when the user chooses these features):
+- Import from URL: the app downloads the image the user pastes or enters
+- Online backgrounds: the app searches and downloads stock images from Pexels
+  and/or Pixabay using API keys you configure. Downloaded backgrounds and
+  photographer/license attribution are stored locally for reuse
+
+Data sharing:
+- The app does not automatically sell or share user data.
+- Users control sharing/export through the iOS share sheet or selected file export option.
+- Online background search sends search queries to Pexels/Pixabay under their terms;
+  product photos are not uploaded for catalog processing.
+
+Permissions:
+- Camera: required for product photos and barcode scanning
+- Photo Library: used only when the user chooses to save, select, or export images
+- Network: used only for optional URL import and online background search
+
+Contact:
+[Add your support email or support URL here]

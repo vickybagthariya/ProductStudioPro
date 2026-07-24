@@ -1,0 +1,158 @@
+import SwiftUI
+
+/// Full-width share/export format picker (replaces compact `confirmationDialog` popovers).
+struct ExportShareOptionsSheet: View {
+    let title: String
+    let message: String
+    var isSingleImage: Bool = false
+    let onZip: () -> Void
+    let onJPG: () -> Void
+    let onPNG: () -> Void
+    let onCSV: () -> Void
+    var onRecipe: ((ExportShareRecipe) -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(DS.TypeScale.sectionTitle)
+                    .foregroundStyle(DS.ColorToken.label)
+                Text(message)
+                    .font(DS.TypeScale.caption)
+                    .foregroundStyle(DS.ColorToken.secondaryLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.Space.screenHorizontal)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    if onRecipe != nil {
+                        Text("Recipes")
+                            .font(DS.TypeScale.micro.weight(.bold))
+                            .foregroundStyle(DS.ColorToken.tertiaryLabel)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        ForEach(ExportShareRecipe.allCases) { recipe in
+                            shareOptionButton(
+                                title: recipe.title,
+                                subtitle: recipe.subtitle,
+                                systemImage: recipe.systemImage,
+                                emphasis: .secondary,
+                                action: { onRecipe?(recipe) }
+                            )
+                        }
+
+                        Text("Formats")
+                            .font(DS.TypeScale.micro.weight(.bold))
+                            .foregroundStyle(DS.ColorToken.tertiaryLabel)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    }
+
+                    shareOptionButton(
+                        title: "ZIP (JPG + CSV)",
+                        subtitle: isSingleImage ? "Packaged handoff for one photo" : "Best for bulk handoff",
+                        systemImage: "doc.zipper",
+                        emphasis: .primary,
+                        action: onZip
+                    )
+                    shareOptionButton(
+                        title: isSingleImage ? "JPG image…" : "JPG images…",
+                        subtitle: "Optional CSV on the next step",
+                        systemImage: "photo",
+                        emphasis: .secondary,
+                        action: onJPG
+                    )
+                    shareOptionButton(
+                        title: isSingleImage ? "PNG transparent cutout…" : "PNG transparent cutouts…",
+                        subtitle: "Keeps transparency when backgrounds were removed",
+                        systemImage: "circle.dashed",
+                        emphasis: .secondary,
+                        action: onPNG
+                    )
+                    shareOptionButton(
+                        title: "CSV only",
+                        subtitle: "Inventory list without images",
+                        systemImage: "tablecells",
+                        emphasis: .secondary,
+                        action: onCSV
+                    )
+                }
+                .padding(.horizontal, DS.Space.screenHorizontal)
+            }
+
+            Button {
+                onCancel?()
+                dismiss()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .padding(.horizontal, DS.Space.screenHorizontal)
+            .padding(.top, 8)
+            .padding(.bottom, 18)
+        }
+        .frame(maxWidth: .infinity)
+        .background(DS.ColorToken.backgroundSecondary)
+        .presentationDetents([.height(onRecipe == nil ? 420 : 620)])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(22)
+    }
+
+    private enum Emphasis {
+        case primary
+        case secondary
+    }
+
+    private func shareOptionButton(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        emphasis: Emphasis,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            action()
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(subtitle)
+                        .font(DS.TypeScale.micro)
+                        .opacity(0.85)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .opacity(0.45)
+            }
+            .foregroundStyle(emphasis == .primary ? DS.ColorToken.onAccent : DS.ColorToken.label)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .fill(emphasis == .primary ? DS.ColorToken.primaryButtonFill : DS.ColorToken.backgroundTertiary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .stroke(DS.ColorToken.separator, lineWidth: 1)
+            )
+        }
+        .buttonStyle(FeedbackPressButtonStyle(pressedScale: DS.Motion.pressScaleCompact, playsHaptic: true))
+    }
+}
