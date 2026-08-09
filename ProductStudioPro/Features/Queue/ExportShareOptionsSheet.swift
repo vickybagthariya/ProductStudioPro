@@ -9,7 +9,6 @@ struct ExportShareOptionsSheet: View {
     let onJPG: () -> Void
     let onPNG: () -> Void
     let onCSV: () -> Void
-    var onRecipe: ((ExportShareRecipe) -> Void)? = nil
     var onCancel: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
@@ -32,32 +31,9 @@ struct ExportShareOptionsSheet: View {
 
             ScrollView {
                 VStack(spacing: 10) {
-                    if onRecipe != nil {
-                        Text("Recipes")
-                            .font(DS.TypeScale.micro.weight(.bold))
-                            .foregroundStyle(DS.ColorToken.tertiaryLabel)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        ForEach(ExportShareRecipe.allCases) { recipe in
-                            shareOptionButton(
-                                title: recipe.title,
-                                subtitle: recipe.subtitle,
-                                systemImage: recipe.systemImage,
-                                emphasis: .secondary,
-                                action: { onRecipe?(recipe) }
-                            )
-                        }
-
-                        Text("Formats")
-                            .font(DS.TypeScale.micro.weight(.bold))
-                            .foregroundStyle(DS.ColorToken.tertiaryLabel)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 4)
-                    }
-
                     shareOptionButton(
-                        title: "ZIP (JPG + CSV)",
-                        subtitle: isSingleImage ? "Packaged handoff for one photo" : "Best for bulk handoff",
+                        title: "ZIP export",
+                        subtitle: isSingleImage ? "Images, CSV, and manifest in one archive" : "All selected images in one ZIP",
                         systemImage: "doc.zipper",
                         emphasis: .primary,
                         action: onZip
@@ -103,7 +79,7 @@ struct ExportShareOptionsSheet: View {
         }
         .frame(maxWidth: .infinity)
         .background(DS.ColorToken.backgroundSecondary)
-        .presentationDetents([.height(onRecipe == nil ? 420 : 620)])
+        .presentationDetents([.height(420)])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(22)
     }

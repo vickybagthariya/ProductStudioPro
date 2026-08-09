@@ -815,7 +815,7 @@ enum BackgroundFillRenderer {
 
     /// Full canvas resolution (capped) so radial/path fills stay sharp on export — no 512px upscale blur.
     private static func gradientSampleDimensions(for rect: CGRect) -> (Int, Int) {
-        let cap = 4096
+        let cap = 2048
         let w = min(cap, max(1, Int(ceil(rect.width))))
         let h = min(cap, max(1, Int(ceil(rect.height))))
         return (w, h)

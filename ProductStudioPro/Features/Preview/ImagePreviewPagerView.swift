@@ -25,6 +25,7 @@ private struct PreviewEditSnapshot {
     let panelToneAdjustments: ManualToneAdjustments
     let panelCutoutFeather: Double
     let panelCutoutBrushMaskData: Data?
+    let panelStudioShadow: SoftSyntheticShadowSettings
     let panelSuppressBrandMark: Bool
     /// Display preview at snapshot time (may include filters on raster).
     let draftJPEG: Data?
@@ -92,6 +93,7 @@ struct ImagePreviewPagerView: View {
     @State private var beforeAfterSplit: CGFloat = 0
     @State private var draftSourceProductID: UUID?
     @State private var panelPolishEnabled = true
+    @State private var aiPolishEnhanceApplied = false
     @State private var panelMode: PhotoEnhancementMode = CatalogProcessingBaseline.mode
     @State private var panelStrength: StudioAIStrength = CatalogProcessingBaseline.strength
     @State private var panelFillRatio: Double = 0.95
@@ -113,9 +115,8 @@ struct ImagePreviewPagerView: View {
     @State private var panelToneAdjustments: ManualToneAdjustments = .neutral
     @State private var panelCutoutFeather: Double = 0.35
     @State private var panelCutoutBrushMaskData: Data?
+    @State private var panelStudioShadow: SoftSyntheticShadowSettings = .off
     @State private var panelHistogram: ExposureHistogramSnapshot?
-    @State private var showCutoutEdgeBrushSheet = false
-    @State private var showToneAdjustSheet = false
     @State private var straightenCommitBaseline: Double?
     @State private var fillCommitBaseline: Double?
     @State private var isDraggingStraighten = false
@@ -227,15 +228,13 @@ struct ImagePreviewPagerView: View {
 
     /// Pinned Format Background or slide-up Edit & Polish — hides canvas overlay hints.
     private var previewBottomSheetOpen: Bool {
-        showEditPolishSheet || showGradientEditorSheet || showToneAdjustSheet || showCutoutEdgeBrushSheet
+        showEditPolishSheet || showGradientEditorSheet
     }
 
     /// Slide-up / full-screen tool panels — auto-hide the top icon tray.
     private var previewTopToolbarObscured: Bool {
         showEditPolishSheet
             || showGradientEditorSheet
-            || showToneAdjustSheet
-            || showCutoutEdgeBrushSheet
             || showMarkupEditor
             || showCustomCanvasSizeSheet
             || showGroupedCoverEditor
@@ -367,25 +366,10 @@ struct ImagePreviewPagerView: View {
         }
     }
 
-    @ViewBuilder
-    private var previewSmartUpscaleBannerOverlay: some View {
-        if let result = session.smartUpscaleResult {
-            VStack {
-                Spacer()
-                SmartUpscaleResultBanner(result: result) {
-                    withAnimation(.easeInOut) { session.dismissSmartUpscaleResult() }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 220)
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
-
     private func updatePreviewEditLift() {
         let screenH = UIScreen.main.bounds.height
         let lift: CGFloat = {
-            if showEditPolishSheet || showGradientEditorSheet || showToneAdjustSheet { return -(screenH * 0.26) }
+            if showEditPolishSheet || showGradientEditorSheet { return -(screenH * 0.26) }
             return 0
         }()
         withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
@@ -452,20 +436,17 @@ struct ImagePreviewPagerView: View {
                                 if hasPendingChanges { showShareUnsavedOptions = true }
                                 else { showPreviewShareDialog = true }
                             },
+                            onEnhance: { applyAIPolishEnhancement() },
                             onEdit: { openEditPolishPanel() },
                             onBackground: { openFormatBackgroundPanel() },
                             onMarkup: { showMarkupEditor = true },
-                            canvasCurrentWidth: panelCanvasWidth,
-                            canvasCurrentHeight: panelCanvasHeight,
-                            includeOriginalAspect: true,
-                            onOriginalAspect: { applyOriginalAspectCanvasPreset() },
-                            onCanvasPreset: { width, height in applyExportCanvasPreset(width: width, height: height) },
-                            onCustomCanvas: { openCustomCanvasSizeSheet() },
                             onInfo: {
                                 guard let product = currentProduct else { return }
                                 openPreviewPhotoInfoSheet(from: product)
                             },
                             onDelete: { showDeleteConfirmAlert = true },
+                            polishEnabled: aiPolishEnhanceApplied,
+                            isEnhanceProcessing: isRenderingDraft && aiPolishEnhanceApplied,
                             deleteEnabled: currentProduct != nil
                         )
                     }
@@ -543,8 +524,11 @@ struct ImagePreviewPagerView: View {
                 session.setPreviewPanelOpen(false)
             }
             .onChange(of: session.products.count) { oldCount, newCount in
-                guard newCount > 0 else { return }
-                selectedIndex = min(selectedIndex, newCount - 1)
+                guard newCount > 0 else {
+                    selectedIndex = 0
+                    return
+                }
+                selectedIndex = min(max(0, selectedIndex), newCount - 1)
                 if newCount > oldCount {
                     resetPreviewZoom()
                     resetPanelFromCurrentProduct()
@@ -666,11 +650,6 @@ struct ImagePreviewPagerView: View {
             .action("defringe", "Fix edges (de-fringe)"),
             .divider("overflow-divider-1"),
             .action("standard-clean", "Standard Clean"),
-            .action("natural", "Natural"),
-            .action("strong", "Strong"),
-            .action("ultra", "Ultra"),
-            .divider("overflow-divider-2"),
-            .action("smart-upscale", "Smart Upscale", isDisabled: currentProduct?.upscaled == true),
         ]
         if session.brandMarkEnabled {
             items.append(.divider("overflow-brand-mark-divider"))
@@ -694,18 +673,13 @@ struct ImagePreviewPagerView: View {
         case "rename": startPreviewRename()
         case "defringe":
             if let p = currentProduct { previewApplyDefringeSharpen(to: p) }
-        case "standard-clean": previewQueueQuickApply(mode: .standardClean, strength: .natural)
-        case "natural": previewQueueQuickApply(mode: .studioAI, strength: .natural)
-        case "strong": previewQueueQuickApply(mode: .studioAI, strength: .strong)
-        case "ultra": previewQueueQuickApply(mode: .studioAI, strength: .ultra)
-        case "smart-upscale":
-            if let p = currentProduct { previewApplySmartUpscale(to: p) }
+        case "standard-clean": previewQueueQuickApply(mode: .standardClean, strength: CatalogProcessingBaseline.strength)
         case "hide-brand-mark":
             previewToggleHideBrandMark()
         case "replace": previewStartReplace()
         case "descale":
             if let p = currentProduct {
-                session.revertSmartUpscale(to: p) { resetPanelFromCurrentProduct() }
+                session.revertLegacyUpscale(to: p) { resetPanelFromCurrentProduct() }
             }
         default: break
         }
@@ -780,6 +754,7 @@ struct ImagePreviewPagerView: View {
         guard panelToneAdjustments == product.toneAdjustments else { return false }
         guard abs(panelCutoutFeather - product.cutoutFeather) < 0.001 else { return false }
         guard panelCutoutBrushMaskData == product.cutoutBrushMaskData else { return false }
+        guard panelStudioShadow == product.studioShadow else { return false }
         guard panelSuppressBrandMark == product.suppressBrandMark else { return false }
         // Compare content fingerprints — GradientColorStop.id regenerates in normalizeStops and breaks Equatable.
         return beforeCompareFillFingerprint(panelBackgroundFillSpec)
@@ -977,7 +952,6 @@ struct ImagePreviewPagerView: View {
                         }
 
                         previewAppliedToastOverlay
-                        previewSmartUpscaleBannerOverlay
                         // Full-screen processing UI lives only in InteractionHUD (above sheets) —
                         // never mount a second MagicPreviewOverlayHost here.
                     }
@@ -1092,52 +1066,16 @@ struct ImagePreviewPagerView: View {
                 ExportShareOptionsSheet(
                     title: "Share this image",
                     message: hasPendingChanges && draftPreviewImage != nil && draftSourceProductID == currentProduct?.id
-                        ? "Uses the live preview on screen. Recommended: JPG for one photo, ZIP for packaged handoff."
-                        : "Uses the last applied queue pixels. Recommended: JPG for one photo, ZIP for packaged handoff.",
+                        ? "Uses the live preview on screen. Recommended: JPG for one photo, ZIP to bundle files."
+                        : "Uses the last applied queue pixels. Recommended: JPG for one photo, ZIP to bundle files.",
                     isSingleImage: true,
                     onZip: {
                         runPreviewShare(includeImages: true, includeCSV: true, format: .jpg, asZip: true)
                     },
                     onJPG: { pendingPreviewCSVAsk = .jpg },
                     onPNG: { pendingPreviewCSVAsk = .png },
-                    onCSV: { runPreviewShare(includeImages: false, includeCSV: true) },
-                    onRecipe: { recipe in
-                        runPreviewShareRecipe(recipe)
-                    }
+                    onCSV: { runPreviewShare(includeImages: false, includeCSV: true) }
                 )
-            }
-            .sheet(isPresented: $showToneAdjustSheet) {
-                ToneAdjustSheet(
-                    tones: $panelToneAdjustments,
-                    histogram: panelHistogram,
-                    onInteractive: { scheduleFilterOnlyRender(quality: .interactive) },
-                    onCommit: { scheduleFilterOnlyRender(quality: .standard) },
-                    onReset: { scheduleFilterOnlyRender(quality: .standard) }
-                )
-            }
-            .sheet(isPresented: $showCutoutEdgeBrushSheet) {
-                if let product = currentProduct {
-                    CutoutEdgeBrushSheet(
-                        previewImage: draftPreviewImage ?? product.image,
-                        feather: $panelCutoutFeather,
-                        brushMaskData: $panelCutoutBrushMaskData,
-                        onApply: {
-                            hasPendingChanges = true
-                            ImageProcessor.invalidateCutoutCache(productID: product.id)
-                            clearFilterPreviewBase()
-                            draftBackgroundCutout = nil
-                            draftBackgroundCutoutProductID = nil
-                            scheduleDraftRender()
-                        },
-                        onFeatherCommit: {
-                            hasPendingChanges = true
-                            clearFilterPreviewBase()
-                            draftBackgroundCutout = nil
-                            draftBackgroundCutoutProductID = nil
-                            scheduleDraftRender()
-                        }
-                    )
-                }
             }
             .alert("Include CSV manifest?", isPresented: previewCSVAskPresented) {
                 Button("Image + CSV") {
@@ -1239,7 +1177,6 @@ struct ImagePreviewPagerView: View {
                 if let product = currentProduct {
                     FullScreenZoomView(
                         image: imageForDisplay(product),
-                        showsSubjectLiftHint: product.backgroundRemoved,
                         resetToken: fullscreenZoomResetToken
                     )
                 }
@@ -1292,12 +1229,6 @@ struct ImagePreviewPagerView: View {
                     )
                 }
             }
-    }
-
-    private var previewBottomDock: some View {
-        DSPreviewDockTray {
-            collapsedPreviewEditorTray
-        }
     }
 
     /// Filename and live-preview status below the top toolbar.
@@ -1483,58 +1414,6 @@ struct ImagePreviewPagerView: View {
         applyExportCanvasPreset(width: width, height: height)
     }
 
-    /// Minimal tray: navigation, share, and one control to open full editing tools.
-    private var collapsedPreviewEditorTray: some View {
-        HStack(spacing: 10) {
-            Button { requestNavigation(to: max(0, selectedIndex - 1)) } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(GlassPreviewButtonStyle())
-            .disabled(selectedIndex <= 0)
-
-            Text("\(selectedIndex + 1) / \(session.products.count)")
-                .font(DS.TypeScale.caption.weight(.semibold))
-                .foregroundStyle(DS.ColorToken.label)
-                .frame(maxWidth: .infinity)
-
-            Button { requestNavigation(to: min(session.products.count - 1, selectedIndex + 1)) } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(GlassPreviewButtonStyle())
-            .disabled(selectedIndex >= session.products.count - 1)
-
-            Button {
-                if hasPendingChanges {
-                    showShareUnsavedOptions = true
-                } else {
-                    showPreviewShareDialog = true
-                }
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 40, height: 40)
-            }
-            .buttonStyle(GlassPreviewButtonStyle())
-            .accessibilityLabel("Share")
-
-            Button {
-                openEditPolishPanel()
-            } label: {
-                Label("Edit", systemImage: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .semibold))
-                    .labelStyle(.titleAndIcon)
-                    .frame(height: 40)
-                    .padding(.horizontal, 10)
-            }
-            .buttonStyle(GlassPreviewButtonStyle())
-            .accessibilityLabel("Edit and polish")
-        }
-    }
-
     private var expandedPreviewEditorTray: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
@@ -1573,8 +1452,6 @@ struct ImagePreviewPagerView: View {
                     .foregroundStyle(PreviewDockChrome.tertiaryLabel)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            previewPhotoQualityControlRow
 
             stylesEditorContent
         }
@@ -1627,24 +1504,7 @@ struct ImagePreviewPagerView: View {
                 }
             }
 
-            Toggle(isOn: $panelAdjustAutoEnhance) {
-                Text("Auto enhance")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(PreviewDockChrome.primaryLabel)
-            }
-            .tint(PreviewDockChrome.sliderTint)
-            .onChange(of: panelAdjustAutoEnhance) { _, _ in
-                if let product = currentProduct {
-                    StylePreviewCacheRevisionStore.shared.invalidate(productID: product.id, reason: "auto enhance")
-                }
-                scheduleFilterOnlyRender()
-            }
-
-            toneAndHistogramSection
-
-            if let product = currentProduct, product.backgroundRemoved || removeBackgroundWhenPreviewing(product: product) {
-                cutoutEdgeSection
-            }
+            editPolishCanvasSection
 
             if session.brandMarkEnabled {
                 Toggle(isOn: $panelSuppressBrandMark) {
@@ -1724,8 +1584,6 @@ struct ImagePreviewPagerView: View {
         let editingActive = hasPendingChanges
             || showEditPolishSheet
             || showGradientEditorSheet
-            || showToneAdjustSheet
-            || showCutoutEdgeBrushSheet
         if editingActive,
            let draft = draftPreviewImage,
            draftSourceProductID == product.id {
@@ -1800,7 +1658,7 @@ struct ImagePreviewPagerView: View {
                         previewZoomableCanvas(
                             image: afterImage,
                             product: product,
-                            allowsSubjectLift: product.backgroundRemoved,
+                            allowsSubjectLift: product.backgroundRemoved && session.subjectLiftEnabledInPreview,
                             width: w,
                             height: h
                         )
@@ -1878,6 +1736,16 @@ struct ImagePreviewPagerView: View {
 
         isPreparingBeforeCompare = true
         beforeCompareUnavailableReason = nil
+
+        guard ImageProcessor.isValidExportBitmap(afterImage) else {
+            guard !Task.isCancelled else { return }
+            alignedBeforeCompareImage = nil
+            alignedBeforeCompareToken = nil
+            isPreparingBeforeCompare = false
+            beforeCompareUnavailableReason = "Preview not ready for compare."
+            if beforeAfterSplit > 0.001 { beforeAfterSplit = 0 }
+            return
+        }
 
         guard let sourceOriginal = await QueueImageResolver.uncompressedOriginal(
             for: product,
@@ -2005,7 +1873,7 @@ struct ImagePreviewPagerView: View {
         flipV: Bool,
         fillSpec: BackgroundFillSpec
     ) {
-        if hasPendingChanges || showEditPolishSheet || showGradientEditorSheet || showToneAdjustSheet || showCutoutEdgeBrushSheet {
+        if hasPendingChanges || showEditPolishSheet || showGradientEditorSheet {
             // Bake at the same rotation as the current After draft so live delta applies equally.
             let bakedRotation: Double = {
                 if draftSourceProductID == product.id {
@@ -2203,6 +2071,7 @@ struct ImagePreviewPagerView: View {
             && !panelAdjustAutoEnhance
             && panelToneAdjustments.isNeutral
             && !shouldSuppressBackdropFringe()
+        let shadow = effectiveStudioShadow
         let bgLongEdge = fillSpec.fillKind == .image
             ? CGFloat(max(previewCanvas.width, previewCanvas.height)) * 1.2
             : nil
@@ -2247,6 +2116,7 @@ struct ImagePreviewPagerView: View {
                         subjectRotationDegrees: rot,
                         flipHorizontal: flipH,
                         flipVertical: flipV,
+                        studioShadow: shadow,
                         maxBackgroundLongEdge: bgLongEdge
                     )
                 }
@@ -2470,6 +2340,27 @@ struct ImagePreviewPagerView: View {
         }
     }
 
+    private var effectiveStudioShadow: SoftSyntheticShadowSettings {
+        panelPolishEnabled ? .off : panelStudioShadow
+    }
+
+    private func applyAIPolishEnhancement() {
+        guard currentProduct != nil, !isApplying else { return }
+        InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+        panelPolishEnabled = true
+        panelStudioShadow = .off
+        aiPolishEnhanceApplied = true
+        panelAdjustAutoEnhance = false
+        panelToneAdjustments = .neutral
+        draftPreviewQuality = .interactive
+        clearFilterPreviewBase()
+        markPendingAndRender(
+            clearRasterEdit: false,
+            invalidateStyleCache: false,
+            quality: .interactive
+        )
+    }
+
     private func openEditPolishPanel() {
         showGradientEditorSheet = false
         showEditPolishSheet = true
@@ -2565,7 +2456,7 @@ struct ImagePreviewPagerView: View {
             let crop = sel.backgroundCrop.map { "\($0.x)-\($0.y)-\($0.width)-\($0.height)" } ?? "full"
             return "\(sel.backgroundID)-\(sel.customImageRef ?? "")-\(sel.shadow.rawValue)-\(bgT)-\(pT)-\(crop)-\(sel.backgroundBlur)-\(sel.reflectionOpacity)"
         }()
-        return "\(s.fillKind.rawValue)-\(s.gradientType.rawValue)-\(s.gradientDirection.rawValue)-\(Int(s.gradientAngleDegrees))-\(s.overlay.rawValue)-\(stopKey)-\(imageKey)"
+        return "\(s.fillKind.rawValue)-\(s.gradientType.rawValue)-\(s.gradientDirection.rawValue)-\(Int(s.gradientAngleDegrees))-\(s.overlay.rawValue)-\(stopKey)-\(imageKey)-shadow:\(effectiveStudioShadow.isEnabled)-\(Int(effectiveStudioShadow.opacity * 1000))-\(Int(effectiveStudioShadow.blur))"
     }
 
     private func removeBackgroundWhenPreviewing(product: CapturedProduct) -> Bool {
@@ -2702,75 +2593,35 @@ struct ImagePreviewPagerView: View {
         panelHistogram = ExposureHistogramAnalyzer.analyze(image)
     }
 
-    private var toneAndHistogramSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let panelHistogram {
-                HistogramDockRow(snapshot: panelHistogram)
-            }
-            Button {
-                presentToolSheetAfterDismissingEdit { showToneAdjustSheet = true }
-            } label: {
-                HStack {
-                    Label("Tone", systemImage: "sun.max")
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer()
-                    Text(panelToneAdjustments.isNeutral ? "Adjust…" : "Edited")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(PreviewDockChrome.secondaryLabel)
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(PreviewDockChrome.tertiaryLabel)
-                }
-                .foregroundStyle(PreviewDockChrome.primaryLabel)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryButtonStyle())
-            .accessibilityLabel("Tone adjustments")
-            .accessibilityHint("Opens tone controls over the photo preview")
+    private var editPolishCanvasSection: some View {
+        DSDropdownCanvasPresetMenu(
+            currentWidth: panelCanvasWidth,
+            currentHeight: panelCanvasHeight,
+            includeOriginalAspect: true,
+            onOriginalAspect: { applyOriginalAspectCanvasPreset() },
+            onSelect: { width, height in applyExportCanvasPreset(width: width, height: height) },
+            onCustom: { presentToolSheetAfterDismissingEdit { openCustomCanvasSizeSheet() } }
+        ) {
+            Label(
+                "Canvas · \(panelCanvasWidth)×\(panelCanvasHeight)",
+                systemImage: "rectangle.ratio.3.to.4"
+            )
+            .font(.system(size: 16, weight: .medium))
+            .labelStyle(.titleAndIcon)
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+            .padding(.vertical, 13)
+            .foregroundStyle(DS.ColorToken.label)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .fill(DS.ColorToken.backgroundTertiary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .stroke(DS.ColorToken.separator, lineWidth: 1)
+            )
         }
-    }
-
-    private var cutoutEdgeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Cutout edges")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(PreviewDockChrome.secondaryLabel)
-            HStack {
-                Text("Feather")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(PreviewDockChrome.secondaryLabel)
-                Spacer()
-                Text("\(Int(panelCutoutFeather * 100))%")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(PreviewDockChrome.primaryLabel)
-                    .monospacedDigit()
-            }
-            Slider(value: $panelCutoutFeather, in: 0...1) { editing in
-                if !editing {
-                    hasPendingChanges = true
-                    draftPreviewQuality = .standard
-                    // Feather needs a cutout re-render (not filter-only).
-                    clearFilterPreviewBase()
-                    invalidateDraftBackgroundCutout()
-                    if let id = currentProduct?.id {
-                        ImageProcessor.invalidateCutoutCache(productID: id)
-                    }
-                    scheduleDraftRender(previewDebounceNanoseconds: 40_000_000)
-                }
-            }
-                .tint(PreviewDockChrome.sliderTint)
-            Button {
-                presentToolSheetAfterDismissingEdit { showCutoutEdgeBrushSheet = true }
-            } label: {
-                Label(
-                    panelCutoutBrushMaskData == nil ? "Edge brush…" : "Edge brush · edited",
-                    systemImage: "paintbrush.pointed"
-                )
-                .font(.system(size: 11, weight: .semibold))
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryButtonStyle())
-        }
+        .accessibilityLabel("Canvas size \(panelCanvasWidth) by \(panelCanvasHeight)")
     }
 
     /// Nested sheets while Edit & Polish is open often fail to present — dismiss Edit first.
@@ -2795,7 +2646,7 @@ struct ImagePreviewPagerView: View {
         scheduleDraftRender(previewDebounceNanoseconds: debounce)
     }
 
-    /// Rotation / fill / flip — reuse cached subject cutout and re-composite (no Vision).
+    /// Rotation / fill / flip / shadow — reuse cached subject cutout and re-composite (no Vision).
     private func scheduleGeometryPreview(quality: DraftPreviewQuality = .standard) {
         guard currentProduct != nil, !draftIsRasterEdit else {
             markPendingAndRender(clearRasterEdit: true, reuseCutout: false, quality: quality)
@@ -2833,6 +2684,7 @@ struct ImagePreviewPagerView: View {
             panelToneAdjustments: panelToneAdjustments,
             panelCutoutFeather: panelCutoutFeather,
             panelCutoutBrushMaskData: panelCutoutBrushMaskData,
+            panelStudioShadow: panelStudioShadow,
             panelSuppressBrandMark: panelSuppressBrandMark,
             draftJPEG: draftPreviewImage.flatMap { $0.jpegData(compressionQuality: 0.92) },
             draftRasterBaseJPEG: draftRasterBaseImage.flatMap { $0.jpegData(compressionQuality: 0.92) },
@@ -2862,6 +2714,7 @@ struct ImagePreviewPagerView: View {
         panelToneAdjustments = snap.panelToneAdjustments
         panelCutoutFeather = snap.panelCutoutFeather
         panelCutoutBrushMaskData = snap.panelCutoutBrushMaskData
+        panelStudioShadow = snap.panelStudioShadow
         panelSuppressBrandMark = snap.panelSuppressBrandMark
 
         renderTask?.cancel()
@@ -2936,15 +2789,15 @@ struct ImagePreviewPagerView: View {
                 var w = Int(sz.width * sc)
                 var h = Int(sz.height * sc)
                 guard w > 0, h > 0 else { return }
-                let maxEdge = 3200
+                let maxEdge = CanvasPresetCatalog.dimensionBounds.upperBound
                 let m = max(w, h)
                 if m > maxEdge {
                     let f = Double(maxEdge) / Double(m)
                     w = max(300, Int(Double(w) * f))
                     h = max(300, Int(Double(h) * f))
                 }
-                panelCanvasWidth = min(3200, max(300, w))
-                panelCanvasHeight = min(3200, max(300, h))
+                panelCanvasWidth = min(maxEdge, max(300, w))
+                panelCanvasHeight = min(maxEdge, max(300, h))
                 markPendingAndRender(clearRasterEdit: true, reuseCutout: true)
             }
         )
@@ -3073,11 +2926,12 @@ struct ImagePreviewPagerView: View {
     private func resetPanelFromCurrentProduct() {
         undoSnapshots.removeAll()
         redoSnapshots.removeAll()
+        aiPolishEnhanceApplied = false
         invalidateDraftBackgroundCutout()
         guard let product = currentProduct else {
             panelPolishEnabled = session.productPolishEnabled
-            panelMode = session.photoEnhancementMode
-            panelStrength = session.studioAIStrength
+            panelMode = .standardClean
+            panelStrength = CatalogProcessingBaseline.strength
             panelFillRatio = session.outputFillRatio
             panelCanvasWidth = session.outputCanvasWidth
             panelCanvasHeight = session.outputCanvasHeight
@@ -3091,6 +2945,7 @@ struct ImagePreviewPagerView: View {
             panelToneAdjustments = .neutral
             panelCutoutFeather = 0.35
             panelCutoutBrushMaskData = nil
+            panelStudioShadow = .off
             panelHistogram = nil
             panelSuppressBrandMark = false
             panelBackgroundColor = Color(uiColor: session.backgroundColor)
@@ -3106,8 +2961,8 @@ struct ImagePreviewPagerView: View {
             return
         }
         panelPolishEnabled = product.polishEnabled
-        panelMode = product.enhancementMode
-        panelStrength = product.studioAIStrength
+        panelMode = .standardClean
+        panelStrength = CatalogProcessingBaseline.strength
         panelFillRatio = product.fillRatio
         panelCanvasWidth = product.canvasWidth
         panelCanvasHeight = product.canvasHeight
@@ -3120,6 +2975,7 @@ struct ImagePreviewPagerView: View {
         panelToneAdjustments = product.toneAdjustments
         panelCutoutFeather = product.cutoutFeather
         panelCutoutBrushMaskData = product.cutoutBrushMaskData
+        panelStudioShadow = product.polishEnabled ? .off : product.studioShadow
         panelHistogram = ExposureHistogramAnalyzer.analyze(product.image)
         panelSuppressBrandMark = product.suppressBrandMark
         panelBackgroundColor = Color(uiColor: product.backgroundColor)
@@ -3333,7 +3189,6 @@ struct ImagePreviewPagerView: View {
             return
         }
 
-        let originalFallback = QueueImageResolver.uncompressedOriginal(for: product) ?? product.image
         let mode = panelMode
         let strength = panelStrength
         let fill = panelFillRatio
@@ -3350,13 +3205,22 @@ struct ImagePreviewPagerView: View {
         let targetH = previewCanvas.height
 
         let colorAccuracy = session.smartColorAccuracyEnabled
-        let upscale = session.smartUpscaleOnExport
+        let upscale = false // Smart Upscale removed.
         let rot = panelRotationDegrees
         let flipH = panelFlipHorizontal
         let flipV = panelFlipVertical
         let removeBG = removeBackgroundWhenPreviewing(product: product)
         let feather = panelCutoutFeather
         let brushMask = panelCutoutBrushMaskData
+        let shadow = effectiveStudioShadow
+        let preferInteractive = draftPreviewQuality == .interactive
+        let previewSourceCap = ImageProcessor.previewSourceLongEdgeCap(
+            canvasWidth: targetW,
+            canvasHeight: targetH,
+            preferInteractive: preferInteractive
+        )
+        let memorySourceCap = MemoryPressureMonitor.shared.recommendedProcessingLongEdge
+        let maxSourceLongEdge = min(previewSourceCap, memorySourceCap)
         renderTask = Task {
             defer {
                 Task { @MainActor in
@@ -3365,60 +3229,84 @@ struct ImagePreviewPagerView: View {
             }
             try? await Task.sleep(nanoseconds: previewDebounceNanoseconds)
             if Task.isCancelled { return }
+
             await MainActor.run {
                 guard generation == draftRenderGeneration else { return }
                 isRenderingDraft = true
                 syncMagicPreviewOverlay()
             }
-            let sourceImage = await Task.detached(priority: .utility) {
-                autoreleasepool { SessionDiskStore.loadOriginalImage(id: productID) }
-            }.value
-            let original = sourceImage ?? originalFallback
-            let result = await ImageProcessor.processForExportAsync(
-                original,
-                removeBackground: removeBG,
-                canvasWidth: targetW,
-                canvasHeight: targetH,
-                rotationDegrees: rot,
-                fillRatio: fill,
-                polishEnabled: polish,
-                enhancementMode: mode,
-                studioAIStrength: strength,
-                backgroundColor: bgColor,
-                secondaryBackgroundColor: bg2Color,
-                backgroundStyle: bgStyle,
-                gradientColorHexes: gradientHexes,
-                backgroundFillSpec: fillSpec,
-                smartColorAccuracy: colorAccuracy,
-                smartUpscale: upscale,
-                flipHorizontal: flipH,
-                flipVertical: flipV,
-                photoFilter: .none,
-                photoFilterIntensity: 1.0,
-                adjustAutoEnhance: false,
-                toneAdjustments: .neutral,
-                cutoutFeather: feather,
-                cutoutBrushMaskData: brushMask,
-                applyBrandMark: false,
-                qos: .userInitiated
-            )
-            if Task.isCancelled { return }
-            await MainActor.run {
-                guard generation == draftRenderGeneration, currentProduct?.id == productID else { return }
-                draftFilterBaseImage = result.image
-                draftBakedRotationDegrees = rot
+
+            let pipelineResult = await HeavyProcessingGate.shared.withExclusiveAccess {
+                let sourceImage = await Task.detached(priority: .utility) {
+                    autoreleasepool { QueueImageResolver.reliableOriginalForReprocess(product) }
+                }.value
+                guard let sourceImage else { return PipelineRenderResult.missingSource }
+
+                let exportResult = await ImageProcessor.processForExportAsync(
+                    sourceImage,
+                    removeBackground: removeBG,
+                    canvasWidth: targetW,
+                    canvasHeight: targetH,
+                    rotationDegrees: rot,
+                    fillRatio: fill,
+                    polishEnabled: polish,
+                    enhancementMode: mode,
+                    studioAIStrength: strength,
+                    backgroundColor: bgColor,
+                    secondaryBackgroundColor: bg2Color,
+                    backgroundStyle: bgStyle,
+                    gradientColorHexes: gradientHexes,
+                    backgroundFillSpec: fillSpec,
+                    smartColorAccuracy: colorAccuracy,
+                    smartUpscale: upscale,
+                    flipHorizontal: flipH,
+                    flipVertical: flipV,
+                    photoFilter: .none,
+                    photoFilterIntensity: 1.0,
+                    adjustAutoEnhance: false,
+                    toneAdjustments: .neutral,
+                    cutoutFeather: feather,
+                    cutoutBrushMaskData: brushMask,
+                    studioShadow: shadow,
+                    applyBrandMark: false,
+                    qos: preferInteractive ? .utility : .userInitiated,
+                    maxSourceLongEdge: maxSourceLongEdge
+                )
+                guard ImageProcessor.isValidExportBitmap(exportResult.image) else {
+                    return PipelineRenderResult.invalidBitmap
+                }
+                let tuned = await applyPreviewTuningAsync(to: exportResult.image)
+                return .success(filterBase: exportResult.image, preview: tuned)
             }
-            let tuned = await applyPreviewTuningAsync(to: result.image)
+
             if Task.isCancelled { return }
-            await MainActor.run {
-                guard generation == draftRenderGeneration, currentProduct?.id == productID else { return }
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    draftPreviewImage = tuned
-                    draftSourceProductID = productID
+            switch pipelineResult {
+            case .missingSource, .invalidBitmap:
+                await MainActor.run {
+                    guard generation == draftRenderGeneration else { return }
+                    isRenderingDraft = false
+                    syncMagicPreviewOverlay()
+                }
+                return
+            case .success(let filterBase, let preview):
+                await MainActor.run {
+                    guard generation == draftRenderGeneration, currentProduct?.id == productID else { return }
+                    draftFilterBaseImage = filterBase
                     draftBakedRotationDegrees = rot
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        draftPreviewImage = preview
+                        draftSourceProductID = productID
+                        draftBakedRotationDegrees = rot
+                    }
                 }
             }
         }
+    }
+
+    private enum PipelineRenderResult {
+        case missingSource
+        case invalidBitmap
+        case success(filterBase: UIImage, preview: UIImage)
     }
 
     private func applyCurrentPanelSettings(navigateAfterApply: Int? = nil, openSharePickerOnComplete: Bool = false) {
@@ -3496,6 +3384,7 @@ struct ImagePreviewPagerView: View {
             let tones = panelToneAdjustments
             let feather = panelCutoutFeather
             let brush = panelCutoutBrushMaskData
+            let shadow = effectiveStudioShadow
             Task.detached(priority: .userInitiated) {
                 let tuned = ImageProcessor.applyExportTuning(
                     to: raster,
@@ -3529,6 +3418,7 @@ struct ImagePreviewPagerView: View {
                         toneAdjustments: tones,
                         cutoutFeather: feather,
                         cutoutBrushMaskData: brush,
+                        studioShadow: shadow,
                         suppressBrandMark: panelSuppressBrandMark,
                         completion: finishApply
                     )
@@ -3560,6 +3450,7 @@ struct ImagePreviewPagerView: View {
             toneAdjustments: panelToneAdjustments,
             cutoutFeather: panelCutoutFeather,
             cutoutBrushMaskData: .some(panelCutoutBrushMaskData),
+            studioShadow: effectiveStudioShadow,
             suppressBrandMark: panelSuppressBrandMark,
             completion: finishApply
         )
@@ -3624,6 +3515,7 @@ struct ImagePreviewPagerView: View {
                 toneAdjustments: panelToneAdjustments,
                 cutoutFeather: panelCutoutFeather,
                 cutoutBrushMaskData: panelCutoutBrushMaskData,
+                studioShadow: effectiveStudioShadow,
                 suppressBrandMark: panelSuppressBrandMark
             )
             isApplying = false
@@ -3667,7 +3559,7 @@ struct ImagePreviewPagerView: View {
             gradientColorHexes: panelGradientHexes,
             backgroundFillSpec: fillSpec,
             smartColorAccuracy: session.smartColorAccuracyEnabled,
-            smartUpscale: session.smartUpscaleOnExport,
+            smartUpscale: false,
             flipHorizontal: panelFlipHorizontal,
             flipVertical: panelFlipVertical,
             photoFilter: .none,
@@ -3676,44 +3568,11 @@ struct ImagePreviewPagerView: View {
             toneAdjustments: .neutral,
             cutoutFeather: panelCutoutFeather,
             cutoutBrushMaskData: panelCutoutBrushMaskData,
+            studioShadow: effectiveStudioShadow,
             applyBrandMark: false
         )
         return await MainActor.run { applyPreviewTuning(to: result.image) }
     }
-
-    private func runPreviewShareRecipe(_ recipe: ExportShareRecipe) {
-        guard let product = currentProduct else { return }
-        let namingMode = session.imageNamingMode
-        let quality = session.compressBeforeShare ? session.jpegQuality : 1.0
-        loadingState?.runAction(
-            key: "preview-recipe-\(recipe.rawValue)",
-            message: "Exporting \(recipe.title)…",
-            global: true,
-            vibrate: session.vibrateEnabled
-        ) {
-            let image: UIImage
-            if self.hasPendingChanges, self.draftSourceProductID == product.id,
-               let rendered = await self.renderFullResolutionExportImage(for: product) {
-                image = rendered
-            } else {
-                image = product.image
-            }
-            let exportProduct = product.replacingProcessedImage(image)
-            let urls = await Task.detached(priority: .userInitiated) {
-                ExportShareRecipeRunner.exportURLs(
-                    products: [exportProduct],
-                    recipe: recipe,
-                    namingMode: namingMode,
-                    jpgQuality: quality
-                )
-            }.value
-            guard !urls.isEmpty else { return }
-            await MainActor.run {
-                self.sharePayload = SharePayload(items: urls, productIDsForRemovalPrompt: [product.id])
-            }
-        }
-    }
-
 
     private func resetPanelToWhite() {
         captureUndoSnapshot()
@@ -3760,13 +3619,6 @@ struct ImagePreviewPagerView: View {
 
     private func previewApplyDefringeSharpen(to product: CapturedProduct) {
         session.applyDefringeSharpen(to: product)
-        if product.id == currentProduct?.id {
-            resetPanelFromCurrentProduct()
-        }
-    }
-
-    private func previewApplySmartUpscale(to product: CapturedProduct) {
-        session.applySmartUpscale(to: product)
         if product.id == currentProduct?.id {
             resetPanelFromCurrentProduct()
         }
@@ -3833,13 +3685,18 @@ struct ImagePreviewPagerView: View {
 
             if asZip, let image = resolvedImage {
                 let exportProduct = product.replacingProcessedImage(image)
+                var context = ExportPackageContext(
+                    projectName: session.activeCatalogSessionName,
+                    marketplaceProfile: MarketplaceExportProfileID.from(exportChannel: session.exportChannelProfile),
+                    brandName: session.brandMarkText,
+                    namingMode: namingMode,
+                    jpegQuality: q
+                )
+                context.imageProvider = { candidate in
+                    candidate.id == exportProduct.id ? image : candidate.image
+                }
                 let url = await Task.detached(priority: .userInitiated) {
-                    ExportManager.zipExportURL(
-                        for: [exportProduct],
-                        namingMode: namingMode,
-                        includeCSV: true,
-                        quality: q
-                    )
+                    ExportManager.zipExportURL(for: [exportProduct], context: context)
                 }.value
                 guard let url else { return }
                 await MainActor.run {
@@ -3936,73 +3793,4 @@ struct ImagePreviewPagerView: View {
         }
     }
 
-    /// Standard Clean (standalone), Studio AI (Natural/Strong/Ultra menu), and Upscale — three equal liquid-glass chips.
-    private var previewPhotoQualityControlRow: some View {
-        HStack(spacing: 8) {
-            Button {
-                applyPreviewPhotoQuality(mode: .standardClean, strength: .natural)
-            } label: {
-                PreviewQualityGlassChip(
-                    title: "Standard Clean",
-                    isSelected: panelMode == .standardClean
-                )
-            }
-            .buttonStyle(PreviewQualityGlassButtonStyle())
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("Standard Clean photo quality")
-            .accessibilityAddTraits(panelMode == .standardClean ? .isSelected : [])
-
-            DSDropdownActionMenu(
-                label: {
-                    PreviewQualityGlassChip(
-                        title: panelMode == .studioAI ? "Studio AI · \(panelStrength.rawValue)" : "Studio AI",
-                        isSelected: panelMode == .studioAI,
-                        showsChevron: true
-                    )
-                },
-                items: StudioAIStrength.allCases.map { strength in
-                    .action(
-                        strength.rawValue,
-                        strength.rawValue,
-                        isSelected: panelMode == .studioAI && panelStrength == strength
-                    )
-                }
-            ) { item in
-                if let strength = StudioAIStrength.allCases.first(where: { $0.rawValue == item.id }) {
-                    applyPreviewPhotoQuality(mode: .studioAI, strength: strength)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("Studio AI photo quality")
-
-            let upscaled = currentProduct?.upscaled == true
-            Button {
-                if let p = currentProduct { session.applySmartUpscale(to: p) }
-            } label: {
-                PreviewQualityGlassChip(
-                    title: upscaled ? "Upscaled" : "Upscale",
-                    isSelected: upscaled
-                )
-            }
-            .buttonStyle(PreviewQualityGlassButtonStyle(isDisabled: currentProduct == nil || upscaled))
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(upscaled ? "Smart Upscale already applied" : "Apply Smart Upscale")
-            .disabled(currentProduct == nil || upscaled)
-        }
-    }
-
-    private func applyPreviewPhotoQuality(mode: PhotoEnhancementMode, strength: StudioAIStrength) {
-        InteractionHaptics.selection(vibrate: session.vibrateEnabled)
-        let oldMode = panelMode
-        let oldStrength = panelStrength
-        panelMode = mode
-        panelStrength = strength
-        guardedFullReprocess(
-            revert: {
-                panelMode = oldMode
-                panelStrength = oldStrength
-            },
-            apply: { markPendingAndRender(clearRasterEdit: true) }
-        )
-    }
 }

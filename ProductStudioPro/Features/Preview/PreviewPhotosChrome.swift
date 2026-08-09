@@ -69,30 +69,33 @@ struct PhotosFilmstripView: View {
 /// Bottom toolbar matching Apple Photos: icon row inside preview dock card.
 struct PhotosLibraryActionBar: View {
     let onShare: () -> Void
+    let onEnhance: () -> Void
     let onEdit: () -> Void
     let onBackground: () -> Void
     let onMarkup: () -> Void
-    let canvasCurrentWidth: Int
-    let canvasCurrentHeight: Int
-    var includeOriginalAspect: Bool = false
-    let onOriginalAspect: (() -> Void)?
-    let onCanvasPreset: (_ width: Int, _ height: Int) -> Void
-    let onCustomCanvas: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
+    var polishEnabled: Bool = false
+    var isEnhanceProcessing: Bool = false
     var deleteEnabled: Bool = true
 
-    private var canvasButtonLabel: String {
-        "\(canvasCurrentWidth)×\(canvasCurrentHeight)"
+    private var enhanceLabel: String {
+        if isEnhanceProcessing { return "Enhance…" }
+        return polishEnabled ? "Enhanced" : "Enhance"
     }
 
     var body: some View {
         HStack(spacing: 0) {
             FeedbackDockButton(systemName: "square.and.arrow.up", label: "Share", action: onShare)
+            FeedbackDockButton(
+                systemName: "sparkles",
+                label: enhanceLabel,
+                isEnabled: !isEnhanceProcessing,
+                action: onEnhance
+            )
             FeedbackDockButton(systemName: "slider.horizontal.3", label: "Edit", action: onEdit)
             FeedbackDockButton(systemName: "paintpalette.fill", label: "Background", action: onBackground)
             FeedbackDockButton(systemName: "pencil.tip.crop.circle", label: "Markup", action: onMarkup)
-            canvasMenuSlot()
             FeedbackDockButton(systemName: "info.circle", label: "Info", action: onInfo)
             FeedbackDockButton(
                 systemName: "trash",
@@ -106,22 +109,5 @@ struct PhotosLibraryActionBar: View {
         .padding(.horizontal, DS.Space.tight)
         .padding(.top, 2)
         .padding(.bottom, DS.Space.tight)
-    }
-
-    private func canvasMenuSlot() -> some View {
-        DSDropdownCanvasPresetMenu(
-            currentWidth: canvasCurrentWidth,
-            currentHeight: canvasCurrentHeight,
-            includeOriginalAspect: includeOriginalAspect,
-            onOriginalAspect: onOriginalAspect,
-            onSelect: onCanvasPreset,
-            onCustom: onCustomCanvas
-        ) {
-            DSPreviewToolbarIconButton(systemName: "rectangle.ratio.3.to.4", label: canvasButtonLabel)
-                .padding(.vertical, 4)
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
-        .accessibilityLabel("Canvas size \(canvasButtonLabel)")
     }
 }

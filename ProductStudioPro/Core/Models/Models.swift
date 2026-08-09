@@ -67,61 +67,33 @@ enum ImageNamingMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Studio AI has been removed from the product. Only Standard Clean remains; any legacy
+/// `"Studio AI"` raw value read from disk / UserDefaults fails to match and callers fall back
+/// to `.standardClean` via `?? .standardClean` (see `CatalogProcessingBaseline.mode`).
 enum PhotoEnhancementMode: String, CaseIterable, Identifiable {
     case standardClean = "Standard Clean"
-    case studioAI = "Studio AI"
 
     var id: String { rawValue }
 
     var description: String {
-        switch self {
-        case .standardClean:
-            return "Fast on-device cleanup for normal website images."
-        case .studioAI:
-            return "Multi-stage on-device polish: neutral color, tone recovery, texture-aware sharpening, edge-aware clarity, and gentle micro-contrast — not a simple brightness slider."
-        }
+        "Fast on-device cleanup for normal website images."
     }
 
-    /// Settings helper — tradeoffs shown when this mode is selected.
+    /// Settings helper text for the fast+good performance profile.
     var settingsGuidanceText: String {
-        switch self {
-        case .standardClean:
-            return "Default for speed: fast cleanup and basic edge tidy. Switch to Studio AI for catalog polish (Natural / Strong / Ultra)."
-        case .studioAI:
-            return "On-device catalog polish. Pick Natural for everyday, Strong for web-ready, Ultra for hero shots."
-        }
+        "Fast cleanup with basic edge tidy — tuned for speed and lower memory use."
     }
 }
 
+/// Vestigial — Smart Upscale / Studio AI strength selection has been removed from the UI and
+/// from the polish pipeline. Kept only so on-disk session records and existing API signatures
+/// stay source/data compatible; the value is never branched on for pixel output anymore.
 enum StudioAIStrength: String, CaseIterable, Identifiable {
     case natural = "Natural"
     case strong = "Strong"
     case ultra = "Ultra"
 
     var id: String { rawValue }
-
-    var description: String {
-        switch self {
-        case .natural:
-            return "Balanced premium polish for everyday catalog photos."
-        case .strong:
-            return "Brighter, cleaner, sharper output for website product listings."
-        case .ultra:
-            return "Strongest safe pass: deeper shadow lift, highlight recovery, and crisp edge definition for hero shots."
-        }
-    }
-
-    /// Settings helper — per-strength tradeoffs (shown when Studio AI + this strength is selected).
-    var settingsGuidanceText: String {
-        switch self {
-        case .natural:
-            return "Everyday catalog polish — balanced tone and clarity."
-        case .strong:
-            return "Web-ready — brighter, cleaner, sharper product listings."
-        case .ultra:
-            return "Hero shots — deepest safe on-device polish (slowest)."
-        }
-    }
 }
 
 /// Product-centric photo adjustments for e-commerce and marketplace sellers.
@@ -727,6 +699,8 @@ struct CapturedProduct: Identifiable {
     let cutoutFeather: Double
     /// Optional grayscale brush mask (PNG) multiplied into the Vision cutout mask. White = keep, black = remove.
     let cutoutBrushMaskData: Data?
+    /// Soft synthetic studio shadow under the cutout (after background removal).
+    let studioShadow: SoftSyntheticShadowSettings
     let preUpscaleCanvasWidth: Int?
     let preUpscaleCanvasHeight: Int?
     let preUpscaleEnhancementMode: PhotoEnhancementMode?
@@ -738,7 +712,8 @@ struct CapturedProduct: Identifiable {
     let gradientColorHexes: [String]
     /// Full PowerPoint-style fill (stops, transparency, type, direction). Nil for legacy sessions.
     let backgroundFillData: Data?
-    /// True once Smart Upscale has been applied so the action button can disable itself.
+    /// Legacy flag: true if a since-removed upscale pass was applied to this item in an
+    /// older app version. Drives the "Remove upscale (descale)" action for old sessions.
     let upscaled: Bool
     /// True when this queue item is a multi-product grouped cover composite.
     let isCompositeBundle: Bool
@@ -790,6 +765,7 @@ struct CapturedProduct: Identifiable {
         toneAdjustments: ManualToneAdjustments = .neutral,
         cutoutFeather: Double = 0.35,
         cutoutBrushMaskData: Data? = nil,
+        studioShadow: SoftSyntheticShadowSettings = .studioDefault,
         preUpscaleCanvasWidth: Int? = nil,
         preUpscaleCanvasHeight: Int? = nil,
         preUpscaleEnhancementMode: PhotoEnhancementMode? = nil,
@@ -830,6 +806,7 @@ struct CapturedProduct: Identifiable {
         self.toneAdjustments = toneAdjustments
         self.cutoutFeather = min(1, max(0, cutoutFeather))
         self.cutoutBrushMaskData = cutoutBrushMaskData
+        self.studioShadow = studioShadow.clamped()
         self.preUpscaleCanvasWidth = preUpscaleCanvasWidth
         self.preUpscaleCanvasHeight = preUpscaleCanvasHeight
         self.preUpscaleEnhancementMode = preUpscaleEnhancementMode
@@ -918,6 +895,7 @@ struct CapturedProduct: Identifiable {
             toneAdjustments: toneAdjustments,
             cutoutFeather: cutoutFeather,
             cutoutBrushMaskData: cutoutBrushMaskData,
+            studioShadow: studioShadow,
             preUpscaleCanvasWidth: preUpscaleCanvasWidth,
             preUpscaleCanvasHeight: preUpscaleCanvasHeight,
             preUpscaleEnhancementMode: preUpscaleEnhancementMode,
@@ -963,6 +941,7 @@ struct CapturedProduct: Identifiable {
             toneAdjustments: toneAdjustments,
             cutoutFeather: cutoutFeather,
             cutoutBrushMaskData: cutoutBrushMaskData,
+            studioShadow: studioShadow,
             preUpscaleCanvasWidth: preUpscaleCanvasWidth,
             preUpscaleCanvasHeight: preUpscaleCanvasHeight,
             preUpscaleEnhancementMode: preUpscaleEnhancementMode,
@@ -1015,6 +994,19 @@ enum QueueImageResolver {
         return fallbackToProcessed ? product.image : nil
     }
 
+    /// Original capture for re-export / reprocess — never returns the 1×1 RAM placeholder.
+    static func reliableOriginalForReprocess(_ product: CapturedProduct) -> UIImage? {
+        if let fromDisk = SessionDiskStore.loadOriginalImage(id: product.id),
+           ImageProcessor.isValidExportBitmap(fromDisk) {
+            return fromDisk
+        }
+        if !product.isOriginalEvicted,
+           ImageProcessor.isValidExportBitmap(product.uncompressedOriginalImage) {
+            return product.uncompressedOriginalImage
+        }
+        return nil
+    }
+
     /// Display / export bitmap — reloads from disk after memory-pressure eviction.
     static func processedDisplay(for product: CapturedProduct) -> UIImage {
         if !product.isProcessedEvicted { return product.image }
@@ -1046,41 +1038,6 @@ enum QueueImageResolver {
             return CGSize(width: w, height: h)
         }
         return product.image.size
-    }
-}
-
-struct SmartUpscaleResult: Identifiable, Equatable {
-    let id = UUID()
-    let count: Int
-    let fromDimension: Int
-    let toDimension: Int
-    let sharpnessDeltaPercent: Double
-    let alreadyUpscaled: Bool
-
-    var title: String {
-        if alreadyUpscaled { return "Already at maximum quality" }
-        if count == 1 { return "Smart Upscale applied" }
-        return "Smart Upscale applied to \(count) photos"
-    }
-
-    var resolutionLine: String {
-        guard fromDimension > 0, toDimension > 0 else { return "" }
-        return "Resolution \(fromDimension)×\(fromDimension) → \(toDimension)×\(toDimension)"
-    }
-
-    var sharpnessLine: String {
-        let pct = sharpnessDeltaPercent
-        if pct >= 1 { return String(format: "Edge sharpness +%.0f%%", pct) }
-        if pct <= -1 { return String(format: "Edge sharpness %.0f%%", pct) }
-        return "Edges refined and resampled"
-    }
-
-    var subtitle: String {
-        if alreadyUpscaled {
-            return "These photos have already been upscaled. Use Remove upscale (descale) in the preview menu, or Reset to original."
-        }
-        let lines = [resolutionLine, sharpnessLine].filter { !$0.isEmpty }
-        return lines.joined(separator: " · ")
     }
 }
 
@@ -1167,8 +1124,10 @@ enum FileNameRules {
     /// True when `upc` holds an auto-generated base name from this app or the legacy `IMG_` scheme.
     static func isAutoGeneratedImportBaseName(_ upc: String) -> Bool {
         if upc.hasPrefix("IMG_") { return true }
-        let p = appFilenamePrefix + "_"
-        return upc.hasPrefix(p)
+        if upc.hasPrefix("\(importAutoNamePrefix)_") { return true }
+        // Legacy prefix derived from the full app display name (e.g. Product-Studio-Pro_…).
+        let legacy = appFilenamePrefix + "_"
+        return upc.hasPrefix(legacy)
     }
 
     /// ERP-safe filename rule. Prevents accidental double extensions, spaces, and unsafe characters.
@@ -1207,10 +1166,13 @@ enum FileNameRules {
         strictImageName(baseName: baseName, angle: angle, duplicateCopyIndex: duplicateCopyIndex, format: .png, multiAngleOrdinal: multiAngleOrdinal)
     }
 
+    /// Short prefix for auto-generated import / random filenames (`PSP_20260804_205803_739`).
+    static let importAutoNamePrefix = "PSP"
+
     static func randomNativeName() -> String {
         let df = DateFormatter()
         df.dateFormat = "yyyyMMdd_HHmmss_SSS"
-        return "\(appFilenamePrefix)_\(df.string(from: Date()))"
+        return "\(importAutoNamePrefix)_\(df.string(from: Date()))"
     }
 
     /// User-entered queue label — UPC, SKU, or any custom text. No check-digit validation.
@@ -1264,123 +1226,6 @@ enum FileNameRules {
     }
 }
 
-
-// MARK: - Capture Quality Assistant
-
-struct CaptureQualityReport {
-    let brightnessScore: Double
-    let blurScore: Double
-    let framingScore: Double
-    let warnings: [String]
-
-    var overallScore: Double {
-        (brightnessScore * 0.34) + (blurScore * 0.43) + (framingScore * 0.23)
-    }
-
-    var shouldWarn: Bool {
-        // User-facing retake prompts must be rare. Only warn on high-confidence severe issues.
-        brightnessScore < 0.08 || brightnessScore > 0.995 || blurScore < 0.10 || warnings.contains(where: { $0.localizedCaseInsensitiveContains("cropped") })
-    }
-
-    var title: String {
-        if !shouldWarn { return "Good Capture" }
-        if brightnessScore < 0.16 || blurScore < 0.16 { return "Poor Capture" }
-        return "Retake Recommended"
-    }
-
-    var summary: String {
-        if warnings.isEmpty { return "Lighting, sharpness, and framing look good." }
-        return warnings.joined(separator: " • ")
-    }
-
-    var primaryLiveHint: String {
-        if brightnessScore < 0.42 { return "Too much shadow / too dark — add light or move product closer to light." }
-        if brightnessScore > 0.88 { return "Too bright / glare risk — tilt product away from reflection." }
-        if blurScore < 0.52 { return "Blurry — hold steady or tap capture after camera settles." }
-        if framingScore < 0.48 { return "Move closer and center product inside the guide box." }
-        if warnings.contains(where: { $0.localizedCaseInsensitiveContains("cropped") }) { return "Back up slightly — product edges may be cropped." }
-        return ""
-    }
-}
-
-enum ImageQualityAnalyzer {
-    static func analyze(_ image: UIImage) -> CaptureQualityReport {
-        guard let cg = ImageProcessor.normalizedCGImage(image) else {
-            return CaptureQualityReport(brightnessScore: 0.7, blurScore: 0.7, framingScore: 0.7, warnings: [])
-        }
-
-        let target = 96
-        let width = target
-        let height = max(1, Int(Double(cg.height) / Double(max(cg.width, 1)) * Double(target)))
-        let bytesPerPixel = 4
-        let bytesPerRow = width * bytesPerPixel
-        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
-        guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            return CaptureQualityReport(brightnessScore: 0.7, blurScore: 0.7, framingScore: 0.7, warnings: [])
-        }
-        ctx.interpolationQuality = .medium
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        var luminance = [Double](repeating: 0, count: width * height)
-        var sum = 0.0
-        for y in 0..<height {
-            for x in 0..<width {
-                let i = y * bytesPerRow + x * bytesPerPixel
-                let r = Double(pixels[i]) / 255.0
-                let g = Double(pixels[i + 1]) / 255.0
-                let b = Double(pixels[i + 2]) / 255.0
-                let l = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                luminance[y * width + x] = l
-                sum += l
-            }
-        }
-
-        let avg = sum / Double(max(1, width * height))
-        let brightnessScore = max(0.0, min(1.0, 1.0 - abs(avg - 0.56) / 0.38))
-
-        var lapValues: [Double] = []
-        lapValues.reserveCapacity(max(0, (width - 2) * (height - 2)))
-        for y in 1..<(height - 1) {
-            for x in 1..<(width - 1) {
-                let c = luminance[y * width + x] * 4
-                let lap = c - luminance[y * width + x - 1] - luminance[y * width + x + 1] - luminance[(y - 1) * width + x] - luminance[(y + 1) * width + x]
-                lapValues.append(lap)
-            }
-        }
-        let lapMean = lapValues.reduce(0, +) / Double(max(1, lapValues.count))
-        let lapVar = lapValues.reduce(0) { $0 + pow($1 - lapMean, 2) } / Double(max(1, lapValues.count))
-        let blurScore = max(0.0, min(1.0, lapVar / 0.010))
-
-        let threshold = max(0.08, min(0.22, avg * 0.35))
-        var minX = width, minY = height, maxX = 0, maxY = 0
-        for y in 1..<(height - 1) {
-            for x in 1..<(width - 1) {
-                let d = abs(luminance[y * width + x] - avg)
-                if d > threshold {
-                    minX = min(minX, x); maxX = max(maxX, x)
-                    minY = min(minY, y); maxY = max(maxY, y)
-                }
-            }
-        }
-        let areaRatio: Double
-        if minX < maxX && minY < maxY {
-            areaRatio = Double((maxX - minX) * (maxY - minY)) / Double(width * height)
-        } else {
-            areaRatio = 0.35
-        }
-        let framingScore = max(0.0, min(1.0, 1.0 - abs(areaRatio - 0.58) / 0.48))
-
-        var warnings: [String] = []
-        // High-confidence warnings only. Clean well-lit photos should not be interrupted.
-        if avg < 0.08 { warnings.append("Extremely dark") }
-        if avg > 0.995 { warnings.append("Severe glare / blown highlights") }
-        if blurScore < 0.10 { warnings.append("Severely blurry — hold steady") }
-        // Framing warnings are intentionally conservative to avoid false retake prompts.
-        if areaRatio > 0.995 { warnings.append("Product may be cropped") }
-
-        return CaptureQualityReport(brightnessScore: brightnessScore, blurScore: blurScore, framingScore: framingScore, warnings: warnings)
-    }
-}
 
 // MARK: - Histogram & clipping (preview / quality)
 
@@ -1436,23 +1281,6 @@ enum ExposureHistogramAnalyzer {
     }
 }
 
-extension ImageQualityAnalyzer {
-    static func analyzeSampleBuffer(_ sampleBuffer: CMSampleBuffer) -> CaptureQualityReport {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return CaptureQualityReport(brightnessScore: 0.7, blurScore: 0.7, framingScore: 0.7, warnings: [])
-        }
-        let ci = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext()
-        let scale = min(1.0, 720.0 / max(ci.extent.width, ci.extent.height))
-        let resized = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let cg = context.createCGImage(resized, from: resized.extent) else {
-            return CaptureQualityReport(brightnessScore: 0.7, blurScore: 0.7, framingScore: 0.7, warnings: [])
-        }
-        return analyze(UIImage(cgImage: cg, scale: 1, orientation: .right))
-    }
-}
-
-
 // MARK: - Adaptive Apple Native Pro Engine
 
 struct AdaptiveImageProfile {
@@ -1491,7 +1319,7 @@ enum ExportChannelProfile: String, CaseIterable, Identifiable {
         case .custom: return "Custom (use Settings below)"
         case .amazon: return "Amazon-style (2000×2000)"
         case .shopify: return "Shopify-style (2048×2048)"
-        case .walmart: return "Walmart-style (3000×3000)"
+        case .walmart: return "Walmart-style (2048×2048)"
         }
     }
 
@@ -1504,7 +1332,7 @@ enum ExportChannelProfile: String, CaseIterable, Identifiable {
         case .shopify:
             return "Sets 2048×2048, ~94% fill, ~88% JPG, compress on — storefront-ready squares."
         case .walmart:
-            return "Sets 3000×3000, ~93% fill, ~90% JPG, compress on — larger catalog squares."
+            return "Sets 2048×2048, ~93% fill, ~90% JPG, compress on — larger catalog squares."
         }
     }
 }
@@ -1538,13 +1366,13 @@ final class CaptureSessionStore: ObservableObject {
         static let vibrateEnabled = "vibrateEnabled"
         static let beepEnabled = "beepEnabled"
         static let autoBackgroundRemoval = "autoBackgroundRemoval"
+        static let subjectLiftEnabledInPreview = SubjectLiftSafety.preferenceKey
         static let outputCanvasSize = "outputCanvasSize"
         static let outputCanvasWidth = "outputCanvasWidth"
         static let outputCanvasHeight = "outputCanvasHeight"
         static let outputFillRatio = "outputFillRatio"
         static let compressBeforeShare = "compressBeforeShare"
         static let jpegQuality = "jpegQuality"
-        static let smartUpscaleOnExport = "smartUpscaleOnExport"
         static let lastUsedUPC = "lastUsedUPC"
         static let barcodeHistory = "barcodeHistory"
         static let preferredCameraDevice = "preferredCameraDevice"
@@ -1554,11 +1382,13 @@ final class CaptureSessionStore: ObservableObject {
         static let hasBatchAutoOpenPreference = "hasBatchAutoOpenPreference"
         static let hasCompletedFirstLaunch = "hasCompletedFirstLaunch"
         static let resetBackgroundToWhiteOnLaunch = "resetBackgroundToWhiteOnLaunch"
+        static let studioPreset = "studioPreset"
+        static let legacyWorkflowPreset = "workflowPreset"
     }
 
     /// Soft limits that keep large sessions responsive without hard-blocking power users.
     enum CatalogSessionLimits {
-        static let softQueueCap = 200
+        static let softQueueCap = 80
         /// Upper bound — live concurrency comes from `MemoryPressureMonitor`.
         static let importConcurrency = 3
         static let maxPhotosPickerSelection = 100
@@ -1569,6 +1399,9 @@ final class CaptureSessionStore: ObservableObject {
 
     @Published private(set) var catalogSessions: [NamedCatalogSession] = []
     @Published private(set) var activeCatalogSessionID: UUID = UUID()
+
+    /// Single source of truth for product, image, and project metadata within the active session.
+    let metadataManager = MetadataManager()
 
     var activeCatalogSessionName: String {
         catalogSessions.first(where: { $0.id == activeCatalogSessionID })?.name ?? "Session"
@@ -1585,7 +1418,22 @@ final class CaptureSessionStore: ObservableObject {
         didSet {
             if sessionPersistenceSuspendDepth > 0 { return }
             schedulePersistToDisk()
+            syncMetadataFromProducts()
         }
+    }
+
+    private func metadataMarketplaceName() -> String {
+        MarketplaceExportProfileID.from(exportChannel: exportChannelProfile).displayName
+    }
+
+    private func syncMetadataFromProducts() {
+        metadataManager.syncFromCapturedProducts(
+            products,
+            sessionID: activeCatalogSessionID,
+            sessionName: activeCatalogSessionName,
+            brandName: brandMarkText,
+            marketplace: metadataMarketplaceName()
+        )
     }
 
     private func schedulePersistToDisk(debounce: TimeInterval = 0.45) {
@@ -1639,6 +1487,7 @@ final class CaptureSessionStore: ObservableObject {
         persistSaveGeneration &+= 1
         let gen = persistSaveGeneration
         let snapshot = products
+        metadataManager.flushToDisk()
         DispatchQueue.global(qos: .userInitiated).async {
             SessionDiskStore.saveQueueAndWait(snapshot, generation: gen, pruneStaleFiles: true)
         }
@@ -1713,13 +1562,13 @@ final class CaptureSessionStore: ObservableObject {
         StylePreviewThumbnailCache.shared.removeAll()
         QueueRowThumbnailCache.removeAll()
         evictAllPersistedOriginalsFromMemory()
-        if level >= .caution {
-            let keep = level == .critical
-                ? max(4, DeviceMemoryTier.current.keepProcessedInMemoryCount / 2)
-                : DeviceMemoryTier.current.keepProcessedInMemoryCount
-            flushPersistenceToDisk()
-            evictStaleProcessedImagesFromMemory(keeping: keep)
-        }
+        // Evict at every level (including `.normal`) — fast+good profile favors keeping
+        // fewer processed bitmaps resident over maximizing in-memory hit rate.
+        let keep = level == .critical
+            ? max(2, DeviceMemoryTier.current.keepProcessedInMemoryCount / 2)
+            : DeviceMemoryTier.current.keepProcessedInMemoryCount
+        flushPersistenceToDisk()
+        evictStaleProcessedImagesFromMemory(keeping: keep)
         if level == .critical {
             cancelActiveBulkWork()
         }
@@ -1801,10 +1650,6 @@ final class CaptureSessionStore: ObservableObject {
     @Published var magicPreviewOverlayMessage: String?
     /// True while `ImagePreviewPagerView` is visible (sheet).
     @Published var isPreviewPanelOpen = false
-
-    /// Small banner the UI can show after Smart Upscale to confirm visible improvement
-    /// ("Upscaled 1200×1200 → 2400×2400, sharpness +24%").
-    @Published var smartUpscaleResult: SmartUpscaleResult?
 
     func pushBlockingOperation(_ message: String = "Processing…") {
         blockingOperationMessage = message
@@ -1960,6 +1805,22 @@ final class CaptureSessionStore: ObservableObject {
 
     @Published var imageNamingMode: ImageNamingMode = ImageNamingMode(rawValue: UserDefaults.standard.string(forKey: DefaultsKey.imageNamingMode) ?? ImageNamingMode.scannedUPC.rawValue) ?? .scannedUPC {
         didSet { UserDefaults.standard.set(imageNamingMode.rawValue, forKey: DefaultsKey.imageNamingMode) }
+    }
+    @Published var studioPreset: StudioPresetID = {
+        let raw = UserDefaults.standard.string(forKey: DefaultsKey.studioPreset)
+            ?? UserDefaults.standard.string(forKey: DefaultsKey.legacyWorkflowPreset)
+            ?? StudioPresetID.defaultStudio.rawValue
+        return StudioPresetID.migrated(from: raw)
+    }() {
+        didSet {
+            UserDefaults.standard.set(studioPreset.rawValue, forKey: DefaultsKey.studioPreset)
+        }
+    }
+
+    /// Legacy accessor — prefer `studioPreset`.
+    var workflowPreset: StudioPresetID {
+        get { studioPreset }
+        set { studioPreset = newValue }
     }
     @Published var selectedAngle: ProductAngle = .none
     @Published var multiAngleEnabled = UserDefaults.standard.object(forKey: DefaultsKey.multiAngleEnabled) as? Bool ?? false {
@@ -2299,15 +2160,18 @@ final class CaptureSessionStore: ObservableObject {
     @Published var autoBackgroundRemoval = UserDefaults.standard.object(forKey: DefaultsKey.autoBackgroundRemoval) as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoBackgroundRemoval, forKey: DefaultsKey.autoBackgroundRemoval) }
     }
+    /// Photos-style Subject Lift in Preview only. Default off — VisionKit analysis is optional and pressure-gated.
+    @Published var subjectLiftEnabledInPreview: Bool = UserDefaults.standard.object(forKey: DefaultsKey.subjectLiftEnabledInPreview) as? Bool ?? false {
+        didSet { UserDefaults.standard.set(subjectLiftEnabledInPreview, forKey: DefaultsKey.subjectLiftEnabledInPreview) }
+    }
     @Published var productPolishEnabled: Bool = UserDefaults.standard.object(forKey: "productPolishEnabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(productPolishEnabled, forKey: "productPolishEnabled") }
     }
-    @Published var photoEnhancementMode: PhotoEnhancementMode = PhotoEnhancementMode(rawValue: UserDefaults.standard.string(forKey: "photoEnhancementMode") ?? CatalogProcessingBaseline.mode.rawValue) ?? CatalogProcessingBaseline.mode {
-        didSet { UserDefaults.standard.set(photoEnhancementMode.rawValue, forKey: "photoEnhancementMode") }
-    }
-    @Published var studioAIStrength: StudioAIStrength = StudioAIStrength(rawValue: UserDefaults.standard.string(forKey: "studioAIStrength") ?? CatalogProcessingBaseline.strength.rawValue) ?? CatalogProcessingBaseline.strength {
-        didSet { UserDefaults.standard.set(studioAIStrength.rawValue, forKey: "studioAIStrength") }
-    }
+    /// Studio AI removed — always Standard Clean. No UserDefaults picker wiring; kept as `@Published`
+    /// only because many call sites still pass it through for API stability.
+    @Published var photoEnhancementMode: PhotoEnhancementMode = .standardClean
+    /// Vestigial — no longer user-facing or used in polish logic. Kept for API stability only.
+    @Published var studioAIStrength: StudioAIStrength = CatalogProcessingBaseline.strength
     /// Default style filter for new captures / imports (Settings-owned; templates do not override).
     @Published var preferredExportPhotoFilter: ExportPhotoFilter = {
         let raw = UserDefaults.standard.string(forKey: "preferredExportPhotoFilter")
@@ -2409,10 +2273,6 @@ final class CaptureSessionStore: ObservableObject {
         didSet { UserDefaults.standard.set(exportChannelProfile.rawValue, forKey: "exportChannelProfile") }
     }
 
-    @Published var smartUpscaleOnExport = UserDefaults.standard.object(forKey: DefaultsKey.smartUpscaleOnExport) as? Bool ?? false {
-        didSet { UserDefaults.standard.set(smartUpscaleOnExport, forKey: DefaultsKey.smartUpscaleOnExport) }
-    }
-
     /// When on, cold launch restores a white studio background instead of the last saved Settings look.
     @Published var resetBackgroundToWhiteOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.resetBackgroundToWhiteOnLaunch) as? Bool ?? false {
         didSet { UserDefaults.standard.set(resetBackgroundToWhiteOnLaunch, forKey: DefaultsKey.resetBackgroundToWhiteOnLaunch) }
@@ -2462,6 +2322,13 @@ final class CaptureSessionStore: ObservableObject {
             products = queue
             sessionPersistenceSuspendDepth = max(0, sessionPersistenceSuspendDepth - 1)
         }
+        metadataManager.loadSession(
+            id: restored.activeID,
+            name: activeCatalogSessionName,
+            products: products,
+            brandName: brandMarkText,
+            marketplace: metadataMarketplaceName()
+        )
         recentBarcodes = (UserDefaults.standard.string(forKey: DefaultsKey.barcodeHistory) ?? "")
             .split(separator: "|")
             .map(String.init)
@@ -2498,6 +2365,7 @@ final class CaptureSessionStore: ObservableObject {
         activeCatalogSessionID = id
         SessionDiskStore.setActiveSessionID(id)
         SessionDiskStore.ensureEmptySessionFolder(sessionID: id)
+        metadataManager.initializeEmptySession(id: id, name: label)
         persistSessionsIndex()
         sessionPersistenceSuspendDepth += 1
         products = []
@@ -2520,6 +2388,7 @@ final class CaptureSessionStore: ObservableObject {
         let meta = NamedCatalogSession(id: id, name: label, createdAt: now, updatedAt: now)
         catalogSessions.insert(meta, at: 0)
         SessionDiskStore.ensureEmptySessionFolder(sessionID: id)
+        metadataManager.initializeEmptySession(id: id, name: label)
         persistSessionsIndex()
         return id
     }
@@ -2562,6 +2431,7 @@ final class CaptureSessionStore: ObservableObject {
 
         flushPersistenceToDisk()
         SessionDiskStore.appendProductsToSession(moving, sessionID: targetID)
+        metadataManager.transferProducts(imageAssetIDs: moving.map(\.id), to: targetID)
 
         if let idx = catalogSessions.firstIndex(where: { $0.id == targetID }) {
             catalogSessions[idx].updatedAt = Date()
@@ -2586,6 +2456,13 @@ final class CaptureSessionStore: ObservableObject {
         sessionPersistenceSuspendDepth += 1
         products = SessionDiskStore.loadQueueIfAvailable() ?? []
         sessionPersistenceSuspendDepth = max(0, sessionPersistenceSuspendDepth - 1)
+        metadataManager.loadSession(
+            id: id,
+            name: activeCatalogSessionName,
+            products: products,
+            brandName: brandMarkText,
+            marketplace: metadataMarketplaceName()
+        )
         StylePreviewThumbnailCache.shared.removeAll()
         QueueRowThumbnailCache.removeAll()
     }
@@ -2596,6 +2473,9 @@ final class CaptureSessionStore: ObservableObject {
               let idx = catalogSessions.firstIndex(where: { $0.id == id }) else { return }
         catalogSessions[idx].name = trimmed
         catalogSessions[idx].updatedAt = Date()
+        if id == activeCatalogSessionID {
+            metadataManager.updateProjectName(trimmed)
+        }
         persistSessionsIndex()
     }
 
@@ -2610,6 +2490,7 @@ final class CaptureSessionStore: ObservableObject {
         }
         catalogSessions.removeAll { $0.id == id }
         SessionDiskStore.deleteSessionFolder(id: id)
+        MetadataStore.deleteSession(sessionID: id)
         persistSessionsIndex()
         return true
     }
@@ -2652,8 +2533,8 @@ final class CaptureSessionStore: ObservableObject {
             jpegQuality = 0.88
             compressBeforeShare = true
         case .walmart:
-            outputCanvasWidth = 3000
-            outputCanvasHeight = 3000
+            outputCanvasWidth = 2048
+            outputCanvasHeight = 2048
             outputFillRatio = 0.93
             jpegQuality = 0.90
             compressBeforeShare = true
@@ -2680,7 +2561,7 @@ final class CaptureSessionStore: ObservableObject {
 
         let autoRm = autoBackgroundRemoval
         let smartColor = smartColorAccuracyEnabled
-        let upscale = smartUpscaleOnExport
+        let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
         let total = targetIDs.count
 
         activeBulkTask = Task {
@@ -2723,6 +2604,7 @@ final class CaptureSessionStore: ObservableObject {
                     toneAdjustments: src.toneAdjustments,
                     cutoutFeather: src.cutoutFeather,
                     cutoutBrushMaskData: row.cutoutBrushMaskData,
+                    studioShadow: src.studioShadow,
                     applyBrandMark: !row.suppressBrandMark,
                     imageNameText: brandKitImageNameText(for: row),
                     qos: total > 1 ? .utility : .userInitiated
@@ -2761,6 +2643,7 @@ final class CaptureSessionStore: ObservableObject {
                     toneAdjustments: src.toneAdjustments,
                     cutoutFeather: src.cutoutFeather,
                     cutoutBrushMaskData: p.cutoutBrushMaskData,
+                    studioShadow: src.studioShadow,
                     preUpscaleCanvasWidth: p.preUpscaleCanvasWidth,
                     preUpscaleCanvasHeight: p.preUpscaleCanvasHeight,
                     preUpscaleEnhancementMode: p.preUpscaleEnhancementMode,
@@ -2861,6 +2744,23 @@ final class CaptureSessionStore: ObservableObject {
         selectedAngle = multiAngleEnabled ? currentCaptureAngle : .none
     }
 
+    /// Set when Home's Multi-Angle shortcut opens capture — consumed once by `CaptureFlowView`.
+    @Published var openedViaMultiAngleHomeShortcut = false
+
+    /// Enables multi-angle capture and resets in-progress state before opening capture from Home.
+    func prepareMultiAngleCaptureFromHome() {
+        openedViaMultiAngleHomeShortcut = true
+        multiAngleEnabled = true
+        enabledAngles = ProductAngle.captureAngles
+        startNextProduct()
+    }
+
+    /// Returns whether capture was opened from Home's Multi-Angle shortcut and clears the flag.
+    func consumeMultiAngleHomeShortcut() -> Bool {
+        defer { openedViaMultiAngleHomeShortcut = false }
+        return openedViaMultiAngleHomeShortcut
+    }
+
     func clearPendingMultiAngleCaptures() {
         pendingMultiAngleCaptures = []
     }
@@ -2889,6 +2789,14 @@ final class CaptureSessionStore: ObservableObject {
             && !pendingMultiAngleCaptures.isEmpty
             && pendingMultiAngleCaptures.count >= activeAngles.count
             && currentImage == nil
+    }
+
+    /// Pops the last buffered multi-angle shot back into the live capture slot for retake.
+    func restoreLastMultiAngleShotForRetake() {
+        guard multiAngleEnabled, let last = pendingMultiAngleCaptures.popLast() else { return }
+        currentImage = last.image
+        currentAngleIndex = max(0, last.ordinal - 1)
+        selectedAngle = currentCaptureAngle
     }
 
     var multiAngleStatusLine: String {
@@ -2954,7 +2862,7 @@ final class CaptureSessionStore: ObservableObject {
 
         let source = ImageProcessor.downsampleIfNeededForImportPipeline(
             img,
-            maxLongEdgePixels: CaptureQualityLimits.cameraOriginalMaxLongEdge
+            maxLongEdgePixels: ImageProcessingLimits.cameraOriginalMaxLongEdge
         )
         let processed = processImageUsingCurrentSettings(
             source,
@@ -3013,7 +2921,7 @@ final class CaptureSessionStore: ObservableObject {
             autoreleasepool {
                 let source = ImageProcessor.downsampleIfNeededForImportPipeline(
                     img,
-                    maxLongEdgePixels: CaptureQualityLimits.cameraOriginalMaxLongEdge
+                    maxLongEdgePixels: ImageProcessingLimits.cameraOriginalMaxLongEdge
                 )
                 // Same long-edge as stored original — first-pass quality matches Apply.
                 let processInput = ImageProcessor.downsampleIfNeededForImportPipeline(
@@ -3193,7 +3101,7 @@ final class CaptureSessionStore: ObservableObject {
             if Task.isCancelled { break }
             let source = ImageProcessor.downsampleIfNeededForImportPipeline(
                 shot.image,
-                maxLongEdgePixels: CaptureQualityLimits.cameraOriginalMaxLongEdge
+                maxLongEdgePixels: ImageProcessingLimits.cameraOriginalMaxLongEdge
             )
             let processed = await processImageForNewCatalogItemAsync(source, identifier: identifier)
             let perShotAction: DuplicateQueueAction
@@ -3363,7 +3271,7 @@ final class CaptureSessionStore: ObservableObject {
         _ image: UIImage,
         enhancementMode: PhotoEnhancementMode,
         studioAIStrength: StudioAIStrength,
-        maxProcessingLongEdge: CGFloat = CaptureQualityLimits.unifiedProcessingMaxLongEdge,
+        maxProcessingLongEdge: CGFloat = ImageProcessingLimits.unifiedProcessingMaxLongEdge,
         imageNameText: String? = nil
     ) async -> (image: UIImage, didRemoveBackground: Bool) {
         let removeBackground = autoBackgroundRemoval
@@ -3440,6 +3348,7 @@ final class CaptureSessionStore: ObservableObject {
         toneAdjustments: ManualToneAdjustments? = nil,
         cutoutFeather: Double? = nil,
         cutoutBrushMaskData: Data? = nil,
+        studioShadow: SoftSyntheticShadowSettings? = nil,
         suppressBrandMark: Bool? = nil
     ) -> CapturedProduct {
         let copyIndex = nextDuplicateCopyIndex(upc: source.upc, angle: source.angle)
@@ -3447,6 +3356,7 @@ final class CaptureSessionStore: ObservableObject {
         let tones = toneAdjustments ?? source.toneAdjustments
         let feather = cutoutFeather ?? source.cutoutFeather
         let brush = cutoutBrushMaskData ?? source.cutoutBrushMaskData
+        let shadow = studioShadow ?? source.studioShadow
         // Caller supplies a fully tuned raster (filters / Brand Mark already applied).
         let tuned = ImageProcessor.applyExportTuning(
             to: image,
@@ -3480,6 +3390,7 @@ final class CaptureSessionStore: ObservableObject {
             toneAdjustments: tones,
             cutoutFeather: feather,
             cutoutBrushMaskData: brush,
+            studioShadow: shadow,
             fillRatio: fillRatio,
             backgroundColor: backgroundColor,
             secondaryBackgroundColor: secondaryBackgroundColor,
@@ -3681,7 +3592,7 @@ final class CaptureSessionStore: ObservableObject {
         let style = backgroundCanvasStyle
         let hexes = gradientColorHexes
         let smartColor = smartColorAccuracyEnabled
-        let upscale = smartUpscaleOnExport
+        let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
         let total = targetIDs.count
 
         activeBulkTask = Task {
@@ -3839,7 +3750,7 @@ final class CaptureSessionStore: ObservableObject {
             let style = backgroundCanvasStyle
             let hexes = gradientColorHexes
             let smartColor = smartColorAccuracyEnabled
-            let upscale = smartUpscaleOnExport
+            let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
             let productId = product.id
             let suppressMark = product.suppressBrandMark
             Task {
@@ -3940,6 +3851,7 @@ final class CaptureSessionStore: ObservableObject {
         toneAdjustments: ManualToneAdjustments = .neutral,
         cutoutFeather: Double? = nil,
         cutoutBrushMaskData: Data? = nil,
+        studioShadow: SoftSyntheticShadowSettings? = nil,
         suppressBrandMark: Bool? = nil,
         completion: (() -> Void)? = nil
     ) {
@@ -3949,6 +3861,10 @@ final class CaptureSessionStore: ObservableObject {
         }
         let fillSpec = backgroundFillSpec ?? BackgroundFillSpec.fromLegacy(style: backgroundStyle, hexes: gradientColorHexes)
         let suppressMark = suppressBrandMark ?? products[idx].suppressBrandMark
+        guard ImageProcessor.isValidExportBitmap(image) else {
+            completion?()
+            return
+        }
         let tuned = ImageProcessor.applyExportTuning(
             to: image,
             photoFilter: photoFilter,
@@ -3985,6 +3901,7 @@ final class CaptureSessionStore: ObservableObject {
             toneAdjustments: toneAdjustments,
             cutoutFeather: cutoutFeather ?? p.cutoutFeather,
             cutoutBrushMaskData: cutoutBrushMaskData ?? p.cutoutBrushMaskData,
+            studioShadow: studioShadow ?? p.studioShadow,
             preUpscaleCanvasWidth: p.preUpscaleCanvasWidth,
             preUpscaleCanvasHeight: p.preUpscaleCanvasHeight,
             preUpscaleEnhancementMode: p.preUpscaleEnhancementMode,
@@ -4026,6 +3943,7 @@ final class CaptureSessionStore: ObservableObject {
         toneAdjustments: ManualToneAdjustments? = nil,
         cutoutFeather: Double? = nil,
         cutoutBrushMaskData: Data?? = nil,
+        studioShadow: SoftSyntheticShadowSettings? = nil,
         suppressBrandMark: Bool? = nil,
         completion: (() -> Void)? = nil
     ) {
@@ -4050,52 +3968,64 @@ final class CaptureSessionStore: ObservableObject {
                 if let cutoutBrushMaskData { return cutoutBrushMaskData }
                 return snap.cutoutBrushMaskData
             }()
+            let pShadow = polishEnabled ? SoftSyntheticShadowSettings.off : (studioShadow ?? snap.studioShadow)
             let suppressMark = suppressBrandMark ?? snap.suppressBrandMark
             let smartColor = smartColorAccuracyEnabled
-            let upscale = smartUpscaleOnExport
+            let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
             let productId = products[idx].id
             let imageNameText = brandKitImageNameText(for: snap)
+            let sourceCap = MemoryPressureMonitor.shared.recommendedProcessingLongEdge
             pushBlockingOperation("Applying…")
             Task.detached(priority: .userInitiated) {
                 let original = autoreleasepool {
-                    SessionDiskStore.loadOriginalImage(id: productId)
-                        ?? QueueImageResolver.uncompressedOriginal(for: snap)
-                        ?? snap.image
+                    QueueImageResolver.reliableOriginalForReprocess(snap)
                 }
-                let processed = await ImageProcessor.processForExportAsync(
-                    original,
-                    removeBackground: removeBackground,
-                    canvasWidth: canvasWidth,
-                    canvasHeight: canvasHeight,
-                    rotationDegrees: rotationSnapshot,
-                    fillRatio: fillRatio,
-                    polishEnabled: polishEnabled,
-                    enhancementMode: enhancementMode,
-                    studioAIStrength: studioAIStrength,
-                    backgroundColor: backgroundColor,
-                    secondaryBackgroundColor: secondaryBackgroundColor,
-                    backgroundStyle: backgroundStyle,
-                    gradientColorHexes: activeGradientHexes,
-                    backgroundFillSpec: fillSpec,
-                    smartColorAccuracy: smartColor,
-                    smartUpscale: upscale,
-                    flipHorizontal: flipH,
-                    flipVertical: flipV,
-                    photoFilter: pFilter,
-                    photoFilterIntensity: pIntensity,
-                    adjustAutoEnhance: pAdjust,
-                    toneAdjustments: pTones,
-                    cutoutFeather: pFeather,
-                    cutoutBrushMaskData: pBrush,
-                    applyBrandMark: !suppressMark,
-                    imageNameText: imageNameText
-                )
+                guard let original else {
+                    await MainActor.run {
+                        self.popBlockingOperation()
+                        completion?()
+                    }
+                    return
+                }
+                let processed = await HeavyProcessingGate.shared.withExclusiveAccess {
+                    await ImageProcessor.processForExportAsync(
+                        original,
+                        removeBackground: removeBackground,
+                        canvasWidth: canvasWidth,
+                        canvasHeight: canvasHeight,
+                        rotationDegrees: rotationSnapshot,
+                        fillRatio: fillRatio,
+                        polishEnabled: polishEnabled,
+                        enhancementMode: enhancementMode,
+                        studioAIStrength: studioAIStrength,
+                        backgroundColor: backgroundColor,
+                        secondaryBackgroundColor: secondaryBackgroundColor,
+                        backgroundStyle: backgroundStyle,
+                        gradientColorHexes: activeGradientHexes,
+                        backgroundFillSpec: fillSpec,
+                        smartColorAccuracy: smartColor,
+                        smartUpscale: upscale,
+                        flipHorizontal: flipH,
+                        flipVertical: flipV,
+                        photoFilter: pFilter,
+                        photoFilterIntensity: pIntensity,
+                        adjustAutoEnhance: pAdjust,
+                        toneAdjustments: pTones,
+                        cutoutFeather: pFeather,
+                        cutoutBrushMaskData: pBrush,
+                        studioShadow: pShadow,
+                        applyBrandMark: !suppressMark,
+                        imageNameText: imageNameText,
+                        maxSourceLongEdge: sourceCap
+                    )
+                }
                 await MainActor.run {
                     defer {
                         self.popBlockingOperation()
                         completion?()
                     }
                     guard let i = self.products.firstIndex(where: { $0.id == productId }) else { return }
+                    guard ImageProcessor.isValidExportBitmap(processed.image) else { return }
                     let p = self.products[i]
                     ImageProcessor.invalidateCutoutCache(productID: productId)
                     self.products[i] = CapturedProduct(
@@ -4123,6 +4053,7 @@ final class CaptureSessionStore: ObservableObject {
                         toneAdjustments: pTones,
                         cutoutFeather: pFeather,
                         cutoutBrushMaskData: pBrush,
+                        studioShadow: pShadow,
                         preUpscaleCanvasWidth: nil,
                         preUpscaleCanvasHeight: nil,
                         preUpscaleEnhancementMode: nil,
@@ -4145,166 +4076,6 @@ final class CaptureSessionStore: ObservableObject {
 
     func reprocessAllProducts() {
         reprocessProducts(ids: Set(products.map { $0.id }))
-    }
-
-    /// Re-runs the export pipeline at a larger canvas size (true super-sample) with extra detail recovery
-    /// so the change is visible. Locks the per-photo `upscaled` flag so the user can't tap it forever.
-    /// Emits `smartUpscaleResult` with a "1200×1200 → 2400×2400, sharpness +24%" summary the UI shows as a banner.
-    func applySmartUpscale(toIDs ids: Set<UUID>) {
-        let targetIDs = products.filter { ids.contains($0.id) && !$0.upscaled && !$0.isCompositeBundle }.map(\.id)
-        guard !targetIDs.isEmpty else {
-            smartUpscaleResult = SmartUpscaleResult(
-                count: 0,
-                fromDimension: 0,
-                toDimension: 0,
-                sharpnessDeltaPercent: 0,
-                alreadyUpscaled: true
-            )
-            return
-        }
-
-        cancelActiveBulkWork()
-        pushBlockingOperation(targetIDs.count > 1 ? "Smart upscaling photos…" : "Smart upscaling photo…")
-        StylePreviewThumbnailCache.shared.removeAll()
-        QueueRowThumbnailCache.removeAll()
-        beginSessionPersistenceBatch(processedImagesOnly: true)
-
-        let removeBackgroundDefault = autoBackgroundRemoval
-        let smartColor = smartColorAccuracyEnabled
-        let total = targetIDs.count
-
-        activeBulkTask = Task {
-            defer {
-                endSessionPersistenceBatch()
-                popBlockingOperation()
-                if activeBulkTask != nil { activeBulkTask = nil }
-            }
-            await yieldUIFrame()
-            var firstFromDimension = 0
-            var firstToDimension = 0
-            var sharpnessDeltaSum: Double = 0
-            var sharpnessSamples = 0
-
-            for (index, id) in targetIDs.enumerated() {
-                if Task.isCancelled { break }
-                blockingOperationMessage = total > 1
-                    ? "Smart upscaling \(index + 1) of \(total)…"
-                    : "Smart upscaling photo…"
-                guard let item = products.first(where: { $0.id == id }) else { continue }
-                guard let source = await exportSourceImage(for: id) else { continue }
-                if Task.isCancelled { break }
-
-                let removeBackground = item.backgroundRemoved || removeBackgroundDefault
-                let beforeMax = item.canvasSize
-                let afterMax = min(3200, max(beforeMax * 2, beforeMax + 800))
-                let scale = Double(afterMax) / Double(max(1, beforeMax))
-                let newW = min(3200, max(100, Int((Double(item.canvasWidth) * scale).rounded())))
-                let newH = min(3200, max(100, Int((Double(item.canvasHeight) * scale).rounded())))
-
-                let processed = await ImageProcessor.processForExportAsync(
-                    source,
-                    removeBackground: removeBackground,
-                    canvasWidth: newW,
-                    canvasHeight: newH,
-                    rotationDegrees: item.rotationDegrees,
-                    fillRatio: item.fillRatio,
-                    polishEnabled: true,
-                    enhancementMode: .studioAI,
-                    studioAIStrength: item.enhancementMode == .studioAI ? item.studioAIStrength : .strong,
-                    backgroundColor: item.backgroundColor,
-                    secondaryBackgroundColor: item.secondaryBackgroundColor,
-                    backgroundStyle: item.backgroundStyle,
-                    gradientColorHexes: item.gradientColorHexes,
-                    smartColorAccuracy: smartColor,
-                    smartUpscale: true,
-                    flipHorizontal: item.flipHorizontal,
-                    flipVertical: item.flipVertical,
-                    photoFilter: item.photoFilter,
-                    photoFilterIntensity: item.photoFilterIntensity,
-                    adjustAutoEnhance: item.adjustAutoEnhance,
-                    applyBrandMark: !item.suppressBrandMark,
-                    imageNameText: brandKitImageNameText(for: item),
-                    qos: total > 1 ? .utility : .userInitiated
-                )
-
-                let beforeSharp = ImageProcessor.sharpnessScore(item.image)
-                let afterSharp = ImageProcessor.sharpnessScore(processed.image)
-                let delta = beforeSharp > 0 ? ((afterSharp - beforeSharp) / beforeSharp) * 100 : 0
-                sharpnessDeltaSum += delta
-                sharpnessSamples += 1
-
-                if firstFromDimension == 0 {
-                    firstFromDimension = beforeMax
-                    firstToDimension = afterMax
-                }
-
-                await Task.detached(priority: .utility) {
-                    autoreleasepool { SessionDiskStore.writeProcessedImage(processed.image, for: id) }
-                }.value
-
-                guard let i = products.firstIndex(where: { $0.id == id }) else { continue }
-                let p = products[i]
-                ImageProcessor.invalidateCutoutCache(productID: id)
-                products[i] = CapturedProduct(
-                    id: p.id,
-                    sequence: p.sequence,
-                    upc: p.upc,
-                    angle: p.angle,
-                    multiAngleOrdinal: p.multiAngleOrdinal,
-                    image: processed.image,
-                    originalImage: p.originalImage,
-                    uncompressedOriginalImage: p.uncompressedOriginalImage,
-                    capturedAt: p.capturedAt,
-                    backgroundRemoved: processed.didRemoveBackground,
-                    duplicateCopyIndex: p.duplicateCopyIndex,
-                    polishEnabled: true,
-                    enhancementMode: .studioAI,
-                    studioAIStrength: p.enhancementMode == .studioAI ? p.studioAIStrength : .strong,
-                    canvasWidth: newW,
-                    canvasHeight: newH,
-                    rotationDegrees: p.rotationDegrees,
-                    flipHorizontal: p.flipHorizontal,
-                    flipVertical: p.flipVertical,
-                    photoFilter: p.photoFilter,
-                    photoFilterIntensity: p.photoFilterIntensity,
-                    adjustAutoEnhance: p.adjustAutoEnhance,
-                    preUpscaleCanvasWidth: p.canvasWidth,
-                    preUpscaleCanvasHeight: p.canvasHeight,
-                    preUpscaleEnhancementMode: p.enhancementMode,
-                    preUpscaleStudioAIStrength: p.studioAIStrength,
-                    fillRatio: p.fillRatio,
-                    backgroundColor: p.backgroundColor,
-                    secondaryBackgroundColor: p.secondaryBackgroundColor,
-                    backgroundStyle: p.backgroundStyle,
-                    gradientColorHexes: p.gradientColorHexes,
-                    backgroundFillData: p.backgroundFillData,
-                    upscaled: true,
-                    isCompositeBundle: p.isCompositeBundle,
-                    compositeLayoutData: p.compositeLayoutData,
-                    suppressBrandMark: p.suppressBrandMark
-                )
-                if total > 1 { await pauseBetweenBulkExportSteps() }
-            }
-
-            let avgDelta = sharpnessSamples > 0 ? sharpnessDeltaSum / Double(sharpnessSamples) : 0
-            if !Task.isCancelled {
-                smartUpscaleResult = SmartUpscaleResult(
-                    count: sharpnessSamples,
-                    fromDimension: firstFromDimension,
-                    toDimension: firstToDimension,
-                    sharpnessDeltaPercent: avgDelta,
-                    alreadyUpscaled: false
-                )
-            }
-        }
-    }
-
-    func applySmartUpscale(to product: CapturedProduct) {
-        applySmartUpscale(toIDs: [product.id])
-    }
-
-    func dismissSmartUpscaleResult() {
-        smartUpscaleResult = nil
     }
 
     /// Toggles or sets per-product Brand Mark suppression and reprocesses from the saved look.
@@ -4365,7 +4136,7 @@ final class CaptureSessionStore: ObservableObject {
         beginSessionPersistenceBatch(processedImagesOnly: true)
 
         let smartColor = smartColorAccuracyEnabled
-        let upscale = smartUpscaleOnExport
+        let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
         let total = targets.count
         let snapshot = targets
 
@@ -4462,7 +4233,9 @@ final class CaptureSessionStore: ObservableObject {
         }
     }
 
-    func revertSmartUpscale(to product: CapturedProduct, completion: (() -> Void)? = nil) {
+    /// Reverts a legacy upscaled item (from an older app version) back to its pre-upscale
+    /// canvas size and settings.
+    func revertLegacyUpscale(to product: CapturedProduct, completion: (() -> Void)? = nil) {
         guard let p = products.first(where: { $0.id == product.id }),
               p.upscaled,
               let preW = p.preUpscaleCanvasWidth,
@@ -4534,7 +4307,7 @@ final class CaptureSessionStore: ObservableObject {
         let style = backgroundCanvasStyle
         let hexes = gradientColorHexes
         let smartColor = smartColorAccuracyEnabled
-        let upscale = smartUpscaleOnExport
+        let upscale = false // Smart Upscale removed — kept as a local for minimal-diff call sites below.
         let fillSpec = BackgroundFillSpec.fromLegacy(style: style, hexes: hexes)
         let total = targetIDs.count
 
@@ -4634,7 +4407,7 @@ final class CaptureSessionStore: ObservableObject {
             image,
             enhancementMode: photoEnhancementMode,
             studioAIStrength: studioAIStrength,
-            smartUpscale: smartUpscaleOnExport,
+            smartUpscale: false,
             imageNameText: imageNameText
         )
     }
@@ -4918,7 +4691,10 @@ enum ExportManager {
         namingMode: ImageNamingMode,
         includeCSV: Bool,
         quality: Double,
-        format: ExportImageFormat = .jpg
+        format: ExportImageFormat = .jpg,
+        marketplaceProfile: MarketplaceExportProfileID = .custom,
+        brandName: String = "",
+        metadataSnapshot: MetadataExportSnapshot? = nil
     ) -> [URL] {
         let folder = prepareExportFolder()
         var urls: [URL] = []
@@ -4929,7 +4705,15 @@ enum ExportManager {
                 urls.append(url)
             }
         }
-        if includeCSV, let csv = csvURL(for: products, namingMode: namingMode, folder: folder, formats: [format]) {
+        if includeCSV, let csv = csvURL(
+            for: products,
+            namingMode: namingMode,
+            folder: folder,
+            formats: [format],
+            marketplaceProfile: marketplaceProfile,
+            brandName: brandName,
+            metadataSnapshot: metadataSnapshot
+        ) {
             urls.append(csv)
         }
         return urls
@@ -4940,7 +4724,10 @@ enum ExportManager {
         for products: [CapturedProduct],
         namingMode: ImageNamingMode,
         includeCSV: Bool,
-        quality: Double
+        quality: Double,
+        marketplaceProfile: MarketplaceExportProfileID = .custom,
+        brandName: String = "",
+        metadataSnapshot: MetadataExportSnapshot? = nil
     ) -> [URL] {
         let folder = prepareExportFolder()
         var urls: [URL] = []
@@ -4953,7 +4740,15 @@ enum ExportManager {
                 }
             }
         }
-        if includeCSV, let csv = csvURL(for: products, namingMode: namingMode, folder: folder, formats: ExportImageFormat.allCases) {
+        if includeCSV, let csv = csvURL(
+            for: products,
+            namingMode: namingMode,
+            folder: folder,
+            formats: ExportImageFormat.allCases,
+            marketplaceProfile: marketplaceProfile,
+            brandName: brandName,
+            metadataSnapshot: metadataSnapshot
+        ) {
             urls.append(csv)
         }
         return urls
@@ -4970,58 +4765,76 @@ enum ExportManager {
         for products: [CapturedProduct],
         namingMode: ImageNamingMode,
         folder: URL? = nil,
-        formats: [ExportImageFormat] = [.jpg]
+        formats: [ExportImageFormat] = [.jpg],
+        marketplaceProfile: MarketplaceExportProfileID = .custom,
+        brandName: String = "",
+        columns: [CSVExportColumn] = CSVExportColumn.packageDefault,
+        metadataSnapshot: MetadataExportSnapshot? = nil
     ) -> URL? {
         let folder = folder ?? FileManager.default.temporaryDirectory.appendingPathComponent(exportFolderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let url = folder.appendingPathComponent(manifestCSVFilename)
-        let dateFormatter = ISO8601DateFormatter()
-        var rows: [String] = []
-        rows.append("sequence,identifier,filename,name_prefix,image_ext,upc,angle,captured_at,background_removed,enhancement_mode,studio_ai_strength,canvas_width,canvas_height,fill_ratio,background_style,file_size,file_size_suffix")
-        for p in products {
+        let exportDate = Date()
+        var rows: [CSVExportRowContext] = []
+        for product in products {
             for format in formats {
-                let filename = p.filename(for: namingMode, format: format)
-                let prefix = p.identifierPrefix(for: namingMode, format: format)
+                let filename = product.filename(for: namingMode, format: format)
                 let imageURL = folder.appendingPathComponent(filename)
-                let byteCount: Int = (try? Data(contentsOf: imageURL).count) ?? 0
-                let scaledSize = scaledFileSize(fromBytes: byteCount)
-                let cols: [String] = [
-                    csvField(String(p.sequence)),
-                    csvField(prefix),
-                    csvField(filename),
-                    csvField(prefix),
-                    csvField(format.fileExtension),
-                    csvField(p.upc, asText: true),
-                    csvField(p.angle.rawValue),
-                    csvField(dateFormatter.string(from: p.capturedAt)),
-                    csvField(p.backgroundRemoved ? "true" : "false"),
-                    csvField(p.enhancementMode.rawValue),
-                    csvField(p.studioAIStrength.rawValue),
-                    csvField(String(p.canvasWidth)),
-                    csvField(String(p.canvasHeight)),
-                    csvField(String(format: "%.2f", p.fillRatio)),
-                    csvField(p.backgroundStyle.rawValue),
-                    csvField(scaledSize.value),
-                    csvField(scaledSize.suffix)
-                ]
-                rows.append(cols.joined(separator: ","))
+                let byteCount = (try? Data(contentsOf: imageURL).count) ?? 0
+                let width = format == .png ? product.canvasWidth : product.canvasWidth
+                let height = product.canvasHeight
+                let base = CSVExportRowContext(
+                    product: product,
+                    namingMode: namingMode,
+                    format: format,
+                    archivePath: filename,
+                    byteCount: byteCount,
+                    exportWidth: width,
+                    exportHeight: height,
+                    marketplaceProfile: marketplaceProfile,
+                    brandName: brandName,
+                    exportDate: exportDate
+                )
+                let row = metadataSnapshot.map { CSVExporter.rowContext(base, snapshot: $0) } ?? base
+                rows.append(row)
             }
         }
-        let body = rows.joined(separator: csvLineEnding) + csvLineEnding
-        let csvData = Data([0xEF, 0xBB, 0xBF]) + Data(body.utf8)
-        try? csvData.write(to: url, options: .atomic)
-        return url
+        return CSVExporter.writeCSV(
+            rows: rows,
+            to: folder,
+            filename: manifestCSVFilename,
+            columns: columns
+        )
     }
 
-    /// Single `.zip` (STORE / uncompressed) containing the same JPG files as folder export, plus optional CSV.
-    static func zipExportURL(for products: [CapturedProduct], namingMode: ImageNamingMode, includeCSV: Bool, quality: Double) -> URL? {
-        let urls = exportURLs(for: products, namingMode: namingMode, includeCSV: includeCSV, quality: quality, format: .jpg)
-        guard !urls.isEmpty else { return nil }
-        let suffix = randomExportZipSuffix()
-        let name = "ProductStudioPro_\(products.count)_images_\(suffix).zip"
-        let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        guard ZipArchiveWriter.makeZip(urls: urls, zipDestination: zipURL) else { return nil }
-        return zipURL
+    /// Professional seller ZIP: `Images/`, `products.csv`, and `manifest.json`.
+    static func zipExportURL(
+        for products: [CapturedProduct],
+        context: ExportPackageContext
+    ) -> URL? {
+        ExportPackageEngine.exportPackageURL(products: products, context: context)
+    }
+
+    /// Backward-compatible ZIP entry point used by share flows.
+    static func zipExportURL(
+        for products: [CapturedProduct],
+        namingMode: ImageNamingMode,
+        includeCSV: Bool,
+        quality: Double,
+        projectName: String = "ProductStudioExport",
+        marketplaceProfile: MarketplaceExportProfileID = .custom,
+        brandName: String = ""
+    ) -> URL? {
+        var context = ExportPackageContext(
+            projectName: projectName,
+            marketplaceProfile: marketplaceProfile,
+            brandName: brandName,
+            namingMode: namingMode,
+            jpegQuality: quality
+        )
+        if !includeCSV {
+            context.csvColumns = []
+        }
+        return zipExportURL(for: products, context: context)
     }
 
     private static func randomExportZipSuffix(length: Int = 5) -> String {
@@ -5035,7 +4848,7 @@ enum ExportManager {
         return needsQuotes ? "\"\(escaped)\"" : escaped
     }
 
-    private static func csvField(_ value: String, asText: Bool = false) -> String {
+    static func csvField(_ value: String, asText: Bool = false) -> String {
         if asText {
             let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
             return "\"\(escaped)\""
@@ -5044,7 +4857,7 @@ enum ExportManager {
     }
 
     /// Scales raw byte counts for CSV: stays in bytes below 1024, then KB, then MB (1024-based).
-    private static func scaledFileSize(fromBytes bytes: Int) -> (value: String, suffix: String) {
+    static func scaledFileSize(fromBytes bytes: Int) -> (value: String, suffix: String) {
         guard bytes > 0 else { return ("0", "bytes") }
         if bytes < 1024 {
             return (String(bytes), "bytes")

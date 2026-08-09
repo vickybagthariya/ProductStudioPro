@@ -5,7 +5,7 @@ enum CompositeBundleCutoutLoader {
     /// Vision input cap for editor preload (avoids full-resolution masks in memory).
     private static let previewSourceMaxLongEdge: CGFloat = 2048
     /// Vision input cap for final export — aligned with unified processing limits.
-    private static let exportSourceMaxLongEdge: CGFloat = CaptureQualityLimits.unifiedProcessingMaxLongEdge
+    private static let exportSourceMaxLongEdge: CGFloat = ImageProcessingLimits.unifiedProcessingMaxLongEdge
 
     static func previewMaxLongEdge(canvasWidth: Int, canvasHeight: Int) -> CGFloat {
         let canvasLong = CGFloat(max(canvasWidth, canvasHeight))

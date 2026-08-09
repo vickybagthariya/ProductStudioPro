@@ -42,7 +42,7 @@ struct HistogramDockRow: View {
 }
 
 
-/// Indeterminate "Studio Magic" overlay shown while the preview reprocesses.
+/// Indeterminate polish overlay shown while the preview reprocesses.
 ///
 /// Forces a dark colour scheme on its content because the overlay sits on top of
 /// the preview photo (which is rendered on `Color.black`). Without this pin the
@@ -60,7 +60,7 @@ struct MagicApplyingOverlay: View {
 
     private var displayMessage: String {
         if let message, !message.isEmpty { return message }
-        return isApplying ? "Applying Studio Magic…" : "Building Preview…"
+        return isApplying ? "Applying polish…" : "Building Preview…"
     }
 
     var body: some View {
@@ -162,15 +162,9 @@ struct AppProcessingOverlay: View {
 struct FullScreenZoomView: View {
     @Environment(\.dismiss) private var dismiss
     let image: UIImage
-    var showsSubjectLiftHint: Bool = false
     var resetToken: String = ""
 
-    private var footerHint: String {
-        if showsSubjectLiftHint {
-            return "Pinch to zoom · Double-tap for 2× · Long-press the product to lift, copy, or share"
-        }
-        return "Pinch to zoom · Double-tap for 2×"
-    }
+    private let footerHint = "Pinch to zoom · Double-tap for 2×"
 
     var body: some View {
         ZStack {
@@ -206,63 +200,6 @@ struct FullScreenZoomView: View {
     }
 }
 
-/// Lightweight toast that tells the user what Smart Upscale actually did
-/// (resolution change + sharpness delta). Auto-dismisses after a few seconds.
-///
-/// Renders with a solid adaptive card surface — ultra-thin material proved
-/// unreadable when the banner sits over photos with bright product subjects
-/// because it picked up too much background colour.
-struct SmartUpscaleResultBanner: View {
-    let result: SmartUpscaleResult
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: result.alreadyUpscaled ? "checkmark.seal.fill" : "sparkles.rectangle.stack.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(AppTheme.accentText)
-                .frame(width: 36, height: 36)
-                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.border, lineWidth: 1))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(result.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                Text(result.subtitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .padding(8)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Dismiss")
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(AppTheme.card)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(AppTheme.border, lineWidth: 1.2))
-        .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 8)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
-                if result.id == self.result.id {
-                    onDismiss()
-                }
-            }
-        }
-    }
-}
-
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     var onComplete: UIActivityViewController.CompletionWithItemsHandler?
@@ -284,6 +221,153 @@ struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Queue dashboard filters (Phase 1)
+
+enum QueueDashboardFilter: String, CaseIterable, Identifiable {
+    case all
+    case needsAttention
+    case edited
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .needsAttention: return "Needs Attention"
+        case .edited: return "Edited"
+        }
+    }
+
+    func filtered(_ products: [CapturedProduct]) -> [CapturedProduct] {
+        switch self {
+        case .all:
+            return products
+        case .needsAttention:
+            return products.filter(\.needsQueueAttention)
+        case .edited:
+            return products.filter(\.hasQueueManualEdits)
+        }
+    }
+}
+
+/// Future Capture Quality Assistant issues — detection not implemented yet.
+enum QueueQualityIssue: String, CaseIterable, Identifiable {
+    case incompleteBackgroundRemoval
+    case blur
+    case poorLighting
+    case croppedProduct
+    case edgeArtifacts
+
+    var id: String { rawValue }
+
+    var symbolName: String { "exclamationmark.triangle.fill" }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .incompleteBackgroundRemoval: return "Background not fully removed"
+        case .blur: return "Blur detected"
+        case .poorLighting: return "Poor lighting"
+        case .croppedProduct: return "Product may be cropped"
+        case .edgeArtifacts: return "Edge artifacts"
+        }
+    }
+}
+
+extension CapturedProduct {
+    /// Reserved for Capture Quality Assistant — returns empty until detection ships.
+    var queueQualityIssues: [QueueQualityIssue] {
+        []
+    }
+
+    var needsQueueAttention: Bool {
+        !queueQualityIssues.isEmpty
+    }
+
+    /// User-applied preview edits (not baseline capture processing).
+    var hasQueueManualEdits: Bool {
+        if isGroupedCoverItem { return true }
+        if rotationDegrees != 0 || flipHorizontal || flipVertical { return true }
+        if photoFilter != .none && photoFilter != .standard { return true }
+        if adjustAutoEnhance { return true }
+        if toneAdjustments != .neutral { return true }
+        if cutoutBrushMaskData != nil { return true }
+        if abs(cutoutFeather - 0.35) > 0.001 { return true }
+        if studioShadow != .studioDefault { return true }
+        return false
+    }
+}
+
+// MARK: - Filter chip row
+
+struct QueueDashboardFilterRow: View {
+    @Binding var selectedFilter: QueueDashboardFilter
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: PSDesignSpacing.sm) {
+                ForEach(QueueDashboardFilter.allCases) { filter in
+                    FilterChip(
+                        title: filter.title,
+                        isSelected: selectedFilter == filter
+                    ) {
+                        selectedFilter = filter
+                    }
+                }
+                CategoryChip(title: "+")
+                    .accessibilityLabel("Custom filters")
+                    .accessibilityHint("Coming soon")
+                    .opacity(0.55)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+// MARK: - Collapsible search
+
+struct QueueCollapsibleSearchBar: View {
+    @Binding var text: String
+    @Binding var isPresented: Bool
+    var focusBinding: FocusState<Bool>.Binding
+
+    var body: some View {
+        if isPresented {
+            HStack(spacing: PSDesignSpacing.sm) {
+                HStack(spacing: PSDesignSpacing.sm) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(PSDesignColors.textSecondary)
+                    TextField("Search by filename or UPC", text: $text)
+                        .font(PSDesignTypography.bodyFont)
+                        .foregroundStyle(PSDesignColors.textPrimary)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused(focusBinding)
+                }
+                .padding(.horizontal, PSDesignSpacing.md - 2)
+                .padding(.vertical, PSDesignSpacing.sm + 2)
+                .background(PSDesignColors.elevatedBackground, in: RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous)
+                        .stroke(PSDesignColors.divider, lineWidth: 1)
+                )
+
+                Button("Cancel") {
+                    PSDesignHaptics.tap()
+                    text = ""
+                    focusBinding.wrappedValue = false
+                    withAnimation(PSDesignMotion.springSoft) {
+                        isPresented = false
+                    }
+                }
+                .font(PSDesignTypography.caption.weight(.semibold))
+                .foregroundStyle(PSDesignColors.primaryAccent)
+            }
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
 }
 
 // MARK: - Named sessions manager

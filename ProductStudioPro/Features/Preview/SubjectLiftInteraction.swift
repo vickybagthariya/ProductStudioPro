@@ -5,10 +5,19 @@ import VisionKit
 // MARK: - Memory / power guard
 
 enum SubjectLiftSafety {
-    /// Skip VisionKit subject analysis under thermal/memory pressure.
+    /// Settings → Subject Lift (Preview). Default off; kept out of the hot path until enabled.
+    static let preferenceKey = "subjectLiftEnabledInPreview"
+
+    @MainActor
+    static var isPreferenceEnabled: Bool {
+        UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? false
+    }
+
+    /// Preference on + device has enough headroom (not critical / LPM / hot).
     @MainActor
     static var allowsSubjectLift: Bool {
-        MemoryPressureMonitor.shared.allowsSubjectLift()
+        guard isPreferenceEnabled else { return false }
+        return MemoryPressureMonitor.shared.allowsSubjectLift()
     }
 }
 

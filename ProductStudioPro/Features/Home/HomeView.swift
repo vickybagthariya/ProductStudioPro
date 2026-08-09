@@ -14,41 +14,88 @@ enum AppRoute: Hashable {
 struct HomeView: View {
     @EnvironmentObject private var session: CaptureSessionStore
     @Environment(\.loadingState) private var loadingState
+    @Environment(\.colorScheme) private var colorScheme
+
     @State private var showAbout = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var showPhotoPicker = false
     @State private var showFileImporter = false
     @State private var showPasteOrURLSheet = false
     @State private var pasteURLText = ""
     @State private var showImportError = false
     @State private var importErrorMessage = ""
     @State private var showSessionManager = false
-    @State private var templateChannelFilter: CatalogTemplateChannel?
-    @State private var templateAppliedToast: String?
     @State private var previewIndex: Int?
 
     var body: some View {
         NavigationStack(path: $session.navigationPath) {
-            AppScreenScaffold(
-                title: "Product Studio",
-                subtitle: "Capture. Polish. Ship catalog photos.",
-                showsHome: false,
-                layout: .scroll,
-                usesLargeTitle: true,
-                headerAccessory: { homeHeaderAccessory }
-            ) {
-                if session.showBranding {
-                    Text("\(session.businessName) — \(session.developerLine)")
-                        .font(DS.TypeScale.caption)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: PSDesignSpacing.lg) {
+                    HomeScreenHeader(
+                        sessionName: session.activeCatalogSessionName,
+                        queuedCount: session.products.count,
+                        showsBranding: session.showBranding,
+                        businessLine: session.showBranding
+                            ? "\(session.businessName) — \(session.developerLine)"
+                            : nil,
+                        brandMarkActive: session.brandMarkIsActive,
+                        onManageSessions: { showSessionManager = true },
+                        onOpenQueue: { navigate(to: .queue) },
+                        onOpenSettings: { navigate(to: .settings) },
+                        onOpenBrandKit: { navigate(to: .brandMark) },
+                        onShowAbout: { showAbout = true }
+                    )
 
-                studioHeroSection
-                recentWorkSection
-                templatePacksSection
-                compactImportSection
-                studioSecondaryActions
-                howItWorksFooter
+                    HomeCreationCard(
+                        selectedPhotoItems: $selectedPhotoItems,
+                        isImporting: session.activeImport != nil,
+                        onCapture: { navigate(to: .singleCapture) },
+                        onImportFiles: {
+                            guard session.activeImport == nil else { return }
+                            PSDesignHaptics.tap()
+                            showFileImporter = true
+                        },
+                        onImportURL: {
+                            HomeImportSupport.handlePasteOrURLImportButton(
+                                session: session,
+                                pasteURLText: $pasteURLText,
+                                showPasteOrURLSheet: $showPasteOrURLSheet,
+                                onError: presentImportError,
+                                onNavigateToQueue: navigateToQueueAfterImport
+                            )
+                        },
+                        onImportClipboard: {
+                            HomeImportSupport.importFromClipboard(
+                                session: session,
+                                onError: presentImportError,
+                                onNavigateToQueue: navigateToQueueAfterImport
+                            )
+                        }
+                    )
+
+                    HomeWorkflowPresetSection(session: session)
+
+                    HomeWorkflowShortcuts(
+                        onBatchCapture: { navigate(to: .batchCapture) },
+                        onMultiAngleCapture: {
+                            session.prepareMultiAngleCaptureFromHome()
+                            navigate(to: .singleCapture)
+                        }
+                    )
+
+                    HomeContinueWorkingSection(
+                        items: recentItems,
+                        onSeeAll: { navigate(to: .queue) },
+                        onSelectItem: { previewIndex = $0 },
+                        onCapture: { navigate(to: .singleCapture) },
+                        onImport: { showPhotoPicker = true }
+                    )
+                }
+                .padding(.horizontal, PSDesignSpacing.screenHorizontal)
+                .padding(.top, PSDesignSpacing.screenVertical)
+                .padding(.bottom, PSDesignSpacing.xl)
             }
+            .background(homeBackground)
             .navigationBarHidden(true)
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
@@ -60,16 +107,48 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showAbout) { AboutHowItWorksView() }
-            .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
-                importFiles(result)
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: true
+            ) { result in
+                HomeImportSupport.importFiles(
+                    result,
+                    session: session,
+                    onError: presentImportError,
+                    onNavigateToQueue: navigateToQueueAfterImport
+                )
             }
+            .photosPicker(
+                isPresented: $showPhotoPicker,
+                selection: $selectedPhotoItems,
+                maxSelectionCount: 100,
+                matching: .images
+            )
             .onChange(of: selectedPhotoItems) { _, newItems in
-                importSelectedPhotos(newItems)
+                guard !newItems.isEmpty else { return }
+                HomeImportSupport.importSelectedPhotos(
+                    newItems,
+                    session: session,
+                    onError: presentImportError,
+                    onNavigateToQueue: navigateToQueueAfterImport
+                ) {
+                    selectedPhotoItems = []
+                }
             }
             .sheet(isPresented: $showPasteOrURLSheet) {
                 PasteOrURLImportSheet(
                     urlText: $pasteURLText,
-                    onImport: { importFromPasteSheetURL() },
+                    onImport: {
+                        if HomeImportSupport.importFromPasteSheetURL(
+                            pasteURLText,
+                            session: session,
+                            onError: presentImportError,
+                            onNavigateToQueue: navigateToQueueAfterImport
+                        ) {
+                            showPasteOrURLSheet = false
+                        }
+                    },
                     onCancel: { showPasteOrURLSheet = false }
                 )
             }
@@ -82,13 +161,6 @@ struct HomeView: View {
                 CatalogSessionManagerSheet()
                     .environmentObject(session)
             }
-            .overlay(alignment: .bottom) {
-                if let templateAppliedToast {
-                    DSCaptureToast(text: templateAppliedToast)
-                        .padding(.bottom, 28)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
             .sheet(isPresented: Binding(
                 get: { previewIndex != nil },
                 set: { if !$0 { previewIndex = nil } }
@@ -99,524 +171,130 @@ struct HomeView: View {
         }
     }
 
-    private var homeHeaderAccessory: some View {
-        Button { showAbout = true } label: {
-            Image(systemName: "info.circle")
-                .font(DS.TypeScale.sectionTitle)
-                .foregroundStyle(DS.ColorToken.accent)
-                .padding(10)
-                .background(DS.ColorToken.backgroundTertiary, in: Circle())
-                .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
-        }
-        .buttonStyle(.plainPressable)
-        .accessibilityLabel("How It Works")
-    }
+    // MARK: - Derived data
 
-    // MARK: - Studio home sections
+    private var recentItems: [HomeRecentItem] {
+        Array(session.products.prefix(3).enumerated()).map { index, product in
+            let metadata = session.metadataManager.productMetadata(forCapturedProductID: product.id)
+            let name = metadata?.productName.nilIfEmpty
+                ?? FileNameRules.baseName(for: product, namingMode: session.imageNamingMode)
+            let edited = RelativeDateTimeFormatter.homeEdited.localizedString(for: product.capturedAt, relativeTo: Date())
+            let subtitle = "Edited \(edited)"
 
-    private var studioHeroSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.stack) {
-            HStack(spacing: DS.Space.stack) {
-                Button {
-                    TapFeedback.deferAction { showSessionManager = true }
-                } label: {
-                    Label(session.activeCatalogSessionName, systemImage: "folder")
-                        .font(DS.TypeScale.caption.weight(.semibold))
-                        .foregroundStyle(DS.ColorToken.label)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(DS.ColorToken.backgroundTertiary, in: Capsule())
-                        .overlay(Capsule().stroke(DS.ColorToken.separator, lineWidth: 1))
-                }
-                .buttonStyle(.plainPressable)
-                .accessibilityLabel("Manage sessions")
-
-                Button {
-                    TapFeedback.deferAction { session.navigationPath.append(AppRoute.queue) }
-                } label: {
-                    Text("\(session.products.count) in queue")
-                        .font(DS.TypeScale.caption.weight(.semibold))
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                }
-                .buttonStyle(.plainPressable)
-
-                Spacer(minLength: 0)
-            }
-
-            Button {
-                TapFeedback.deferAction { session.navigationPath.append(AppRoute.singleCapture) }
-            } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("New shoot", systemImage: "camera.fill")
-                        .font(.system(size: 22, weight: .bold))
-                    Text("Single product · #\(session.nextSequence)")
-                        .font(DS.TypeScale.caption)
-                        .opacity(0.9)
-                }
-                .foregroundStyle(DS.ColorToken.onAccent)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 22)
-                .background(DS.ColorToken.primaryButtonFill, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-            }
-            .buttonStyle(.plainPressable)
-            .accessibilityLabel("New shoot")
-            .accessibilityHint("Start single product capture")
-
-            HStack(spacing: DS.Space.stack) {
-                Button {
-                    TapFeedback.deferAction { session.navigationPath.append(AppRoute.batchCapture) }
-                } label: {
-                    Label("Batch mode", systemImage: "square.stack.3d.up.fill")
-                        .font(DS.TypeScale.bodyEmphasis)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-
-                Button {
-                    TapFeedback.deferAction { session.navigationPath.append(AppRoute.queue) }
-                } label: {
-                    Label("Queue", systemImage: "list.bullet.rectangle")
-                        .font(DS.TypeScale.bodyEmphasis)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-            }
-
-            if session.multiAngleEnabled {
-                Text(session.multiAngleStatusLine)
-                    .font(DS.TypeScale.micro)
-                    .foregroundStyle(DS.ColorToken.secondaryLabel)
-            }
+            return HomeRecentItem(
+                id: product.id,
+                productName: name,
+                subtitle: subtitle,
+                statusLabel: statusLabel(for: product),
+                statusTone: statusTone(for: product),
+                thumbnail: QueueRowThumbnailCache.thumbnail(
+                    for: product.id,
+                    image: product.image,
+                    displayPoints: 56
+                ),
+                queueIndex: index
+            )
         }
     }
 
-    private var recentWorkSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.tight) {
-            HStack {
-                Text("Recent in session")
-                    .font(DS.TypeScale.sectionTitle)
-                    .foregroundStyle(DS.ColorToken.label)
-                Spacer()
-                if !session.products.isEmpty {
-                    Button("See all") {
-                        TapFeedback.deferAction { session.navigationPath.append(AppRoute.queue) }
-                    }
-                    .font(DS.TypeScale.caption.weight(.semibold))
-                    .foregroundStyle(DS.ColorToken.accent)
-                }
-            }
-
-            if session.products.isEmpty {
-                Text("Your next shoot will show up here.")
-                    .font(DS.TypeScale.caption)
-                    .foregroundStyle(DS.ColorToken.secondaryLabel)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 18)
-                    .padding(.horizontal, 14)
-                    .background(DS.ColorToken.backgroundTertiary, in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: DS.Space.tight) {
-                        ForEach(Array(session.products.prefix(10).enumerated()), id: \.element.id) { index, product in
-                            Button {
-                                TapFeedback.deferAction { previewIndex = index }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Image(uiImage: QueueRowThumbnailCache.thumbnail(for: product.id, image: product.image, displayPoints: 72))
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 72, height: 72)
-                                        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.thumbnail, style: .continuous))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: DS.Radius.thumbnail, style: .continuous)
-                                                .stroke(DS.ColorToken.separator, lineWidth: 1)
-                                        )
-                                    Text(product.upc)
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                                        .lineLimit(1)
-                                        .frame(width: 72, alignment: .leading)
-                                }
-                            }
-                            .buttonStyle(.plainPressable)
-                            .accessibilityLabel("Preview \(product.upc)")
-                            .accessibilityHint("Opens image preview")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var templatePacksSection: some View {
-        VStack(alignment: .leading, spacing: DS.Space.tight) {
-            HStack {
-                Text("Templates")
-                    .font(DS.TypeScale.sectionTitle)
-                    .foregroundStyle(DS.ColorToken.label)
-                Spacer()
-                Text("Sets canvas, polish & background")
-                    .font(DS.TypeScale.micro)
-                    .foregroundStyle(DS.ColorToken.tertiaryLabel)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    templateChannelChip(title: "All", selected: templateChannelFilter == nil) {
-                        templateChannelFilter = nil
-                    }
-                    ForEach(CatalogTemplateChannel.allCases) { channel in
-                        templateChannelChip(
-                            title: channel.title,
-                            selected: templateChannelFilter == channel
-                        ) {
-                            templateChannelFilter = channel
-                        }
-                    }
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(CatalogTemplateLibrary.orderedPacks(
-                        for: templateChannelFilter,
-                        activeID: session.activeCatalogTemplatePackID
-                    )) { pack in
-                        let isActive = session.activeCatalogTemplatePackID == pack.id
-                        Button {
-                            InteractionHaptics.selection(vibrate: session.vibrateEnabled)
-                            session.applyCatalogTemplate(pack)
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                                templateAppliedToast = pack.id == CatalogTemplateLibrary.appDefaultsID
-                                    ? "App Defaults restored"
-                                    : "Template · \(pack.name)"
-                            }
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                                withAnimation { templateAppliedToast = nil }
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: -6) {
-                                    ForEach(Array(pack.backgroundPreset.hexes.prefix(3).enumerated()), id: \.offset) { _, hex in
-                                        Circle()
-                                            .fill(Color(hex: hex))
-                                            .frame(width: 18, height: 18)
-                                            .overlay(Circle().stroke(DS.ColorToken.background, lineWidth: 1.5))
-                                    }
-                                    Spacer(minLength: 0)
-                                    if isActive {
-                                        Text("In use")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundStyle(DS.ColorToken.onAccent)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 3)
-                                            .background(DS.ColorToken.primaryButtonFill, in: Capsule())
-                                    } else {
-                                        Image(systemName: pack.id == CatalogTemplateLibrary.appDefaultsID
-                                              ? "house.fill"
-                                              : pack.channel.systemImage)
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundStyle(DS.ColorToken.secondaryLabel)
-                                    }
-                                }
-                                Text(pack.name)
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(DS.ColorToken.label)
-                                    .lineLimit(1)
-                                Text(pack.subtitle)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(DS.ColorToken.secondaryLabel)
-                                    .lineLimit(2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(12)
-                            .frame(width: 148, alignment: .leading)
-                            .background(DS.ColorToken.backgroundSecondary, in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
-                                    .stroke(
-                                        isActive ? DS.ColorToken.accent : DS.ColorToken.separator,
-                                        lineWidth: isActive ? 2 : 1
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plainPressable)
-                        .accessibilityLabel(isActive ? "\(pack.name), in use" : "Apply template \(pack.name)")
-                        .accessibilityAddTraits(isActive ? .isSelected : [])
-                    }
-                }
-                .animation(.spring(response: 0.35, dampingFraction: 0.86), value: session.activeCatalogTemplatePackID)
-            }
-        }
-    }
-
-    private func templateChannelChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            InteractionHaptics.selection(vibrate: session.vibrateEnabled)
-            action()
-        } label: {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(selected ? DS.ColorToken.onAccent : DS.ColorToken.label)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    selected ? DS.ColorToken.primaryButtonFill : DS.ColorToken.backgroundTertiary,
-                    in: Capsule()
+    private var homeBackground: some View {
+        ZStack {
+            PSDesignColors.background
+            if colorScheme == .dark {
+                RadialGradient(
+                    colors: [PSDesignColors.secondaryAccent.opacity(0.08), .clear],
+                    center: .topTrailing,
+                    startRadius: 8,
+                    endRadius: 360
                 )
-                .overlay(Capsule().stroke(DS.ColorToken.separator, lineWidth: selected ? 0 : 1))
+            } else {
+                LinearGradient(
+                    colors: [
+                        PSDesignColors.background,
+                        PSDesignColors.elevatedBackground.opacity(0.5),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
         }
-        .buttonStyle(.plainPressable)
+        .ignoresSafeArea()
     }
 
-    private var compactImportSection: some View {
-        let isImportingPhotos = session.activeImport != nil
-        return VStack(alignment: .leading, spacing: DS.Space.tight) {
-            Text("Import")
-                .font(DS.TypeScale.sectionTitle)
-                .foregroundStyle(DS.ColorToken.label)
+    private func statusLabel(for product: CapturedProduct) -> String {
+        if product.angle != .none {
+            return product.angle.rawValue
+        }
+        if product.backgroundRemoved {
+            return "Background removed"
+        }
+        return "In queue"
+    }
 
-            HStack(spacing: DS.Space.stack) {
-                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 100, matching: .images) {
-                    Label(isImportingPhotos ? "Importing…" : "Photos", systemImage: "photo.on.rectangle.angled")
-                        .font(DS.TypeScale.bodyEmphasis)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(isImportingPhotos)
+    private func statusTone(for product: CapturedProduct) -> StatusChip.Tone {
+        if product.backgroundRemoved { return .success }
+        if product.angle != .none { return .accent }
+        return .neutral
+    }
 
-                Button {
-                    guard !isImportingPhotos else { return }
-                    InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-                    showFileImporter = true
-                } label: {
-                    Label("Files", systemImage: "folder")
-                        .font(DS.TypeScale.bodyEmphasis)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(isImportingPhotos)
+    // MARK: - Navigation
 
-                Button { handlePasteOrURLImportButton() } label: {
-                    Label("URL", systemImage: "link")
-                        .font(DS.TypeScale.bodyEmphasis)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(isImportingPhotos)
-            }
-
-            Text(importQualityStatusLine)
-                .font(DS.TypeScale.micro)
-                .foregroundStyle(DS.ColorToken.secondaryLabel)
+    private func navigate(to route: AppRoute) {
+        TapFeedback.deferAction {
+            session.navigationPath.append(route)
         }
     }
 
-    private var studioSecondaryActions: some View {
-        HStack(spacing: DS.Space.stack) {
-            Button {
-                TapFeedback.deferAction { session.navigationPath.append(AppRoute.brandMark) }
-            } label: {
-                Label(session.brandMarkIsActive ? "Brand Kit · On" : "Brand Kit", systemImage: "seal")
-                    .font(DS.TypeScale.bodyEmphasis)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryButtonStyle())
-
-            Button {
-                TapFeedback.deferAction { session.navigationPath.append(AppRoute.settings) }
-            } label: {
-                Label("Settings", systemImage: "gearshape.fill")
-                    .font(DS.TypeScale.bodyEmphasis)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryButtonStyle())
-        }
+    private func navigateToQueueAfterImport() {
+        session.navigationPath = NavigationPath()
+        session.navigationPath.append(AppRoute.queue)
     }
 
-    private var howItWorksFooter: some View {
-        Button {
-            InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-            showAbout = true
-        } label: {
-            Label("How It Works", systemImage: "info.circle")
-                .font(DS.TypeScale.bodyEmphasis)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(SecondaryButtonStyle())
-        .accessibilityHint(DashboardHelpTip.howItWorks)
-        .padding(.top, DS.Space.tight)
-        .padding(.bottom, DS.Space.stack)
-    }
-
-    private var importQualityStatusLine: String {
-        if session.photoEnhancementMode == .studioAI {
-            return "Imports use Settings · Studio AI \(session.studioAIStrength.rawValue)"
-        }
-        return "Imports use Settings · Standard Clean"
-    }
-
-    private func handlePasteOrURLImportButton() {
-        guard session.activeImport == nil else { return }
-        InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-        let snapshot = ClipboardURLImageImport.readClipboard()
-        if !snapshot.images.isEmpty {
-            importUIImageBatch(snapshot.images, progressMessage: "Importing from clipboard…")
-            return
-        }
-        if !snapshot.urls.isEmpty {
-            importImagesFromURLs(snapshot.urls)
-            return
-        }
-        pasteURLText = snapshot.suggestedURLText
-        showPasteOrURLSheet = true
-    }
-
-    private func importFromPasteSheetURL() {
-        let trimmed = pasteURLText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = ClipboardURLImageImport.parseURL(from: trimmed) else {
-            importErrorMessage = ClipboardURLImageImportError.invalidURL.localizedDescription
-            showImportError = true
-            return
-        }
-        showPasteOrURLSheet = false
-        importImagesFromURLs([url])
-    }
-
-    private func importUIImageBatch(_ images: [UIImage], progressMessage: String) {
-        guard !images.isEmpty else { return }
-        let gate = session.gateAddingPhotos(count: images.count)
-        if gate.isBlocked {
-            importErrorMessage = gate.userMessage
-            showImportError = true
-            return
-        }
-        // Clipboard paste already decoded — stream through the same append path without re-holding a second copy set.
-        Task {
-            await MainActor.run {
-                session.beginSessionPersistenceBatch()
-                session.updateActiveImport(completed: 0, total: images.count, message: progressMessage)
-            }
-            let imported = await session.streamImportCatalogImages(
-                total: images.count,
-                progressMessage: progressMessage
-            ) { index in
-                guard index >= 0, index < images.count else { return nil }
-                return images[index]
-            }
-            await MainActor.run {
-                session.endSessionPersistenceBatch()
-                if imported > 0 {
-                    session.navigationPath = NavigationPath()
-                    session.navigationPath.append(AppRoute.queue)
-                } else {
-                    importErrorMessage = ClipboardURLImageImportError.unsupportedImage.localizedDescription
-                    showImportError = true
-                }
-                session.clearActiveImport()
-            }
-        }
-    }
-
-    private func importImagesFromURLs(_ urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        let gate = session.gateAddingPhotos(count: urls.count)
-        if gate.isBlocked {
-            importErrorMessage = gate.userMessage
-            showImportError = true
-            return
-        }
-        Task {
-            await MainActor.run {
-                session.beginSessionPersistenceBatch()
-                session.updateActiveImport(completed: 0, total: urls.count, message: "Downloading image…")
-            }
-            let imported = await session.streamImportCatalogImages(
-                total: urls.count,
-                progressMessage: "Downloading image…"
-            ) { index in
-                guard index >= 0, index < urls.count else { return nil }
-                return try? await ClipboardURLImageImport.downloadImage(from: urls[index])
-            }
-            await MainActor.run {
-                session.endSessionPersistenceBatch()
-                if imported > 0 {
-                    session.navigationPath = NavigationPath()
-                    session.navigationPath.append(AppRoute.queue)
-                } else {
-                    importErrorMessage = ClipboardURLImageImportError.downloadFailed.localizedDescription
-                    showImportError = true
-                }
-                session.clearActiveImport()
-            }
-        }
-    }
-
-    private func importFiles(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, !urls.isEmpty else { return }
-        let gate = session.gateAddingPhotos(count: urls.count)
-        if gate.isBlocked {
-            importErrorMessage = gate.userMessage
-            showImportError = true
-            return
-        }
-        Task {
-            await MainActor.run { session.beginSessionPersistenceBatch() }
-            let imported = await session.streamImportCatalogImages(
-                total: urls.count,
-                progressMessage: "Importing from Files…"
-            ) { index in
-                guard index >= 0, index < urls.count else { return nil }
-                let url = urls[index]
-                let allowed = url.startAccessingSecurityScopedResource()
-                defer { if allowed { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return autoreleasepool { ImageImportDecoder.uiImage(from: data) ?? UIImage(data: data) }
-            }
-            await MainActor.run {
-                session.endSessionPersistenceBatch()
-                if imported > 0 {
-                    session.navigationPath = NavigationPath()
-                    session.navigationPath.append(AppRoute.queue)
-                }
-                session.clearActiveImport()
-            }
-        }
-    }
-
-    private func importSelectedPhotos(_ items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        let gate = session.gateAddingPhotos(count: items.count)
-        if gate.isBlocked {
-            importErrorMessage = gate.userMessage
-            showImportError = true
-            selectedPhotoItems = []
-            return
-        }
-        Task {
-            await MainActor.run { session.beginSessionPersistenceBatch() }
-            let imported = await session.streamImportCatalogImages(
-                total: items.count,
-                progressMessage: "Importing from Photos…"
-            ) { index in
-                guard index >= 0, index < items.count else { return nil }
-                guard let data = try? await items[index].loadTransferable(type: Data.self) else { return nil }
-                return autoreleasepool { ImageImportDecoder.uiImage(from: data) ?? UIImage(data: data) }
-            }
-            await MainActor.run {
-                session.endSessionPersistenceBatch()
-                if imported > 0 {
-                    session.navigationPath = NavigationPath()
-                    session.navigationPath.append(AppRoute.queue)
-                }
-                selectedPhotoItems = []
-                session.clearActiveImport()
-            }
-        }
+    private func presentImportError(_ message: String) {
+        importErrorMessage = message
+        showImportError = true
     }
 }
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension RelativeDateTimeFormatter {
+    static let homeEdited: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+}
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Home — Recent Products") {
+    HomeView()
+        .environmentObject(HomePreviewSupport.makeSession(productCount: 3))
+        .environmentObject(LoadingStateManager())
+        .environment(\.loadingState, LoadingStateManager())
+}
+
+#Preview("Home — Empty") {
+    HomeView()
+        .environmentObject(HomePreviewSupport.makeSession(productCount: 0))
+        .environmentObject(LoadingStateManager())
+        .environment(\.loadingState, LoadingStateManager())
+}
+
+#Preview("Home — Dark Mode") {
+    HomeView()
+        .environmentObject(HomePreviewSupport.makeSession(productCount: 2))
+        .environmentObject(LoadingStateManager())
+        .environment(\.loadingState, LoadingStateManager())
+        .preferredColorScheme(.dark)
+}
+#endif
 
 struct AboutHowItWorksView: View {
     @Environment(\.dismiss) private var dismiss
@@ -668,7 +346,7 @@ enum DashboardHelpTip {
     static let sessionStatus = "Sessions are named photo queues. Tap the Session tile to switch, rename, or create a folder. Queued is the count in the active session; Next is the upcoming product number."
     static let singleCapture = "One product: photo → scan or name → Queue. Multi-angle: all angles first, then one UPC for the set."
     static let batchMode = "Capture many in a row. With multi-angle on: shoot every angle first, then one UPC names UPC-1, UPC-2, …. Camera settings carry between shots."
-    static let importPhotos = "Import camera-roll shots into the active session. Uses your current Settings → Photo Quality mode (Standard Clean or Studio AI). Change Settings before importing, or Reprocess in Queue later."
+    static let importPhotos = "Import camera-roll shots into the active session. Uses your current Settings → Photo Quality defaults (Standard Clean). Change Settings before importing, or Reprocess in Queue later."
     static let importFiles = "Bring images from the Files app — including iCloud Drive and other cloud locations you enable under Files → Locations (Google Drive, Dropbox, OneDrive, etc.). Uses the same Settings → Photo Quality mode as Photos import."
     static let importPasteOrURL = "Paste a photo or image URL into the active session. Uses your current Settings → Photo Quality mode. URL import requires network."
     static let viewQueue = "Polish, markup, and export from the active session. Share as ZIP, JPG, PNG cutouts, or CSV."
@@ -700,9 +378,6 @@ Best for large inventory sessions.
 4. Items auto-save into the active session’s Queue.
 5. Preview, compare Before/After, adjust quality, or reprocess if needed.
 6. Export when the batch is ready.
-
-Tip:
-After capture, the Live Capture Quality Assistant checks lighting, sharpness, and framing. If it warns you, retake for better final polish.
 """
         ),
         HelpSection(
@@ -778,43 +453,19 @@ When it applies:
 """
         ),
         HelpSection(
-            title: "Photo Quality Modes",
+            title: "Photo Quality",
             icon: "sparkles",
             content: """
 Standard Clean:
-• Fastest mode
+• Fast, on-device polish tuned for speed and low memory use
 • Apple background removal
 • Edge cleanup
-• White background
-• Brightness + contrast polish
-• Best for speed
+• White (or custom) background
+• Auto white balance, exposure, and brightness + contrast polish
+• Safe, controlled sharpening
+• Best for large sessions and smooth performance
 
-Studio AI Natural:
-• Safer premium enhancement
-• Auto white balance
-• Better edge smoothing
-• Better color balance
-• Sharper image
-• Soft professional shadow
-
-Studio AI Strong:
-• More aggressive enhancement
-• Stronger local clarity
-• Stronger denoise
-• Better lighting correction
-• Cleaner white/custom canvas
-• Great for wholesale websites
-
-Studio AI Ultra:
-• Maximum safe on-device enhancement
-• Softer than previous builds to prevent pixel breakup
-• Stronger shadow/highlight recovery
-• Strong denoise with controlled detail
-• Better product edge smoothing
-• Hero image feel
-• Best for product showcases
-
-Studio AI improves lighting, edges, shadow, color, and polish. It should not intentionally alter product labels, warnings, barcodes, flavor names, or identity.
+Standard Clean improves lighting, edges, shadow, color, and polish. It should not intentionally alter product labels, warnings, barcodes, flavor names, or identity.
 """
         ),
         HelpSection(
@@ -836,29 +487,7 @@ AI can dramatically improve good photos.
 AI cannot fully rescue blurry, dark, or severely poor captures.
 
 Best formula:
-Good Capture Assistant score + Studio AI Ultra = closest local professional catalog quality.
-"""
-        ),
-        HelpSection(
-            title: "Capture Quality Assistant",
-            icon: "viewfinder.circle",
-            content: """
-Before taking the shot, the camera shows:
-• Center product box
-• Edge boundary guide
-• Live score
-• Light, sharpness, and framing scores
-• Move closer guidance
-• Too much shadow / too dark warning
-• Glare warning
-• Hold steady warning
-
-After every photo, the app also checks brightness, blur, framing, crop risk, and glare.
-
-If the photo may not polish well, you’ll see Retake Recommended.
-Choose Retake for best quality or Use Anyway to continue quickly.
-
-Local Studio AI works best when the original capture is bright, sharp, and centered.
+Bright, sharp, centered capture + Standard Clean polish = closest local professional catalog quality.
 """
         ),
         HelpSection(
@@ -990,7 +619,7 @@ Safe together (no Markup loss):
 • Markup (after Save) + filters on top of that preview.
 
 Rebuilds from original (app asks if Markup is saved):
-• Background style, gradient colors, premium presets, canvas size, fill %, rotation, flips, Studio AI quality chips.
+• Background style, gradient colors, premium presets, canvas size, fill %, rotation, flips.
 
 Order that avoids surprises:
 1. Adjust background/enhancement first (or accept a rebuild warning later).
@@ -1021,21 +650,15 @@ Reduces rough native cutout edges for cleaner product borders.
 """
         ),
         HelpSection(
-            title: "Studio AI (On-Device)",
+            title: "Standard Clean (On-Device)",
             icon: "cpu",
             content: """
-Studio AI applies layered local processing: exposure, white balance, shadow/highlight recovery, vibrance, noise reduction, controlled sharpening, edge smoothing, halo cleanup, and soft studio shadow — plus your chosen background canvas.
+Standard Clean applies layered local processing: exposure, white balance, shadow/highlight recovery, vibrance, noise reduction, controlled sharpening, and edge/halo cleanup — plus your chosen background canvas.
 
-Strength:
-• Natural — safest everyday polish
-• Strong — stronger web-ready correction
-• Ultra — maximum on-device hero-image polish
+Tuned for a fast+good performance profile: lower peak memory and quicker processing so large sessions stay smooth.
 
 Already taken photos:
-Compare Standard / Natural / Strong / Ultra in Preview, review Before/After, tune background and fill, then Apply. Unsaved changes prompt you before you leave.
-
-Smart Upscale:
-On-device Lanczos pass with micro-sharpening (capped resolution). After it runs, a banner reports the from/to size. Disabled until you reprocess from the original so a photo isn’t upscaled repeatedly.
+Review Before/After in Preview, tune background and fill, then Apply. Unsaved changes prompt you before you leave.
 """
         ),
         HelpSection(
@@ -1046,7 +669,7 @@ Business Branding:
 Customize dashboard display name.
 
 Photo Quality:
-Standard Clean or Studio AI (Natural / Strong / Ultra), Smart Color Accuracy, Smart Upscale on export.
+Standard Clean polish (Auto Background Removal + Product Polish).
 
 Default style filter:
 Applied to new captures and imports only (default Original). Home templates do not change this — App Defaults resets it to Original. Change per photo in Edit & Polish.
@@ -1066,8 +689,7 @@ UPC scan, Random, or Manual; enable angles in Settings or on the capture screen.
 Recommended setup:
 • Background Removal: ON
 • Product Polish: ON
-• Photo Quality: Studio AI Strong or Ultra
-• Smart Color Accuracy: ON
+• Photo Quality: Standard Clean (fast, memory-light)
 • Default style filter: Original (or pick a look you always want on new shots)
 • Background: White for catalog · Home templates or Format Background for hero looks
 • Naming: UPC

@@ -14,24 +14,19 @@ struct CanvasPreset: Identifiable, Hashable {
 }
 
 enum CanvasPresetCatalog {
-    static let dimensionBounds: ClosedRange<Int> = 300...3200
+    /// Lowered from 3200 as part of the fast+good / lower-memory-pressure profile — the largest
+    /// marketplace preset kept is Shopify's 2048×2048.
+    static let dimensionBounds: ClosedRange<Int> = 300...2048
 
     static let all: [CanvasPreset] = [
         CanvasPreset(label: "Catalog square", technicalLabel: "1:1", width: 1200, height: 1200),
         CanvasPreset(label: "Catalog square HD", technicalLabel: "1:1", width: 1600, height: 1600),
         CanvasPreset(label: "Amazon square", technicalLabel: "1:1", width: 2000, height: 2000),
         CanvasPreset(label: "Shopify square", technicalLabel: "1:1", width: 2048, height: 2048),
-        CanvasPreset(label: "Large catalog square", technicalLabel: "1:1", width: 2400, height: 2400),
-        CanvasPreset(label: "Walmart square", technicalLabel: "1:1", width: 3000, height: 3000),
         CanvasPreset(label: "Instagram story", technicalLabel: "9:16", width: 1080, height: 1920),
         CanvasPreset(label: "YouTube / hero banner", technicalLabel: "16:9", width: 1920, height: 1080),
         CanvasPreset(label: "Wide product banner", technicalLabel: "16:9", width: 1600, height: 900),
         CanvasPreset(label: "Cinema panoramic", technicalLabel: "1.85:1", width: 1998, height: 1080),
-        CanvasPreset(label: "iPhone display", technicalLabel: "19.5:9", width: 2532, height: 1170),
-        CanvasPreset(label: "iPhone Pro display", technicalLabel: "19.5:9", width: 2796, height: 1290),
-        CanvasPreset(label: "Ultrawide monitor", technicalLabel: "21:9", width: 2560, height: 1080),
-        // Kept within dimensionBounds while preserving 21:9 (3440×1440 would clamp width alone and distort).
-        CanvasPreset(label: "Ultrawide 4K-class", technicalLabel: "21:9", width: 3200, height: 1340),
         CanvasPreset(label: "Print 5×4", technicalLabel: "5:4", width: 1500, height: 1200),
         CanvasPreset(label: "Print 7×5", technicalLabel: "7:5", width: 1400, height: 1000),
         CanvasPreset(label: "Classic 4×3", technicalLabel: "4:3", width: 1600, height: 1200),

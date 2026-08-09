@@ -9,8 +9,7 @@ layered photo styles all run locally — photos never leave the phone.
 ### Capture & import
 
 - **Single & batch capture** with optional multi-angle shots (front, back, side 1,
-  side 2) and a live **Capture Quality Assistant** that flags blur, low light, and
-  framing issues before you queue the shot.
+  side 2).
 - **Barcode / UPC scanning** for automatic filenames (`AVCaptureSession` scanner).
 - **Import from Photos**, **Files**, or **paste / URL** (`PasteOrURLImportSheet`,
   `ClipboardURLImageImport`) — new items land at the top of the queue.
@@ -18,16 +17,14 @@ layered photo styles all run locally — photos never leave the phone.
   `SanitizedAppDisplayName_yyyyMMdd_HHmmss_SSS`. UPC scan and manual rename are
   supported; legacy `IMG_*` names stay stable until renamed.
 
-### Polish & upscale
+### Polish
 
-- **Standard Clean** and **Studio AI** (Natural, Strong, Ultra) with white balance,
-  shadow/highlight recovery, local clarity, denoise, sharpening, and **Smart Color
-  Accuracy**.
-- **Smart Upscale** doubles canvas resolution with super-sampled Lanczos resizing
-  plus an unsharp-mask pass. The app reports before/after resolution and edge-sharpness
-  delta.
-- **Fix edges (de-fringe)** and **Standard Clean / Studio AI quick applies** from
-  preview overflow menus.
+- **Standard Clean** on-device polish: white balance, shadow/highlight recovery,
+  local clarity, denoise, and controlled sharpening. Tuned for a fast+good
+  performance profile — quick processing and lower peak memory, so large sessions
+  stay smooth.
+- **Fix edges (de-fringe)** and **Standard Clean quick apply** from preview and
+  queue overflow menus.
 
 ### Backgrounds & canvas
 
@@ -101,7 +98,6 @@ Optional on-device stamps (`BrandMarkEditorView`, `BrandMarkModels`,
   reset, swipe between items, before/after compare slider.
 - **Slide-up sheets**: Edit & Polish (styles + straighten + object fill),
   Format Background, custom canvas size, photo info (`PreviewPhotoInfoSheet`).
-- **Subject Lift** hint on background-removed items (`SubjectLiftInteraction`).
 - **Markup** (PencilKit + rich text: bold, italic, underline, strikethrough, fonts,
   colors, free placement) in `MarkupEditorView`.
 - **Save as duplicate** preserves the current on-screen look (styles, gradients,
@@ -111,7 +107,7 @@ Optional on-device stamps (`BrandMarkEditorView`, `BrandMarkModels`,
 ### Queue & export
 
 - Search by filename or UPC; duplicate protection when adding; in-place rename.
-- **Selection mode** with bulk Enhance, Smart Upscale, Match Look, and share.
+- **Selection mode** with bulk Enhance, Sync Look, and share.
 - Share dialog: individual JPGs, CSV manifest, or zipped archive (`SessionDiskStore`).
 - **Persistent session** survives app restarts: lossless **PNG originals**, JPEG
   display bitmaps, generation-token disk writes, and `flushPersistenceToDisk()` when
@@ -119,13 +115,19 @@ Optional on-device stamps (`BrandMarkEditorView`, `BrandMarkModels`,
 
 ### Memory safety
 
-- Soft queue cap (**200** per session) plus a live **memory budget**
+Product Studio Pro runs a **fast+good, memory-conscious** profile by default:
+Standard Clean polish only, a 3072px capture/import long-edge cap, a 2048px canvas
+soft-cap, and a small number of processed bitmaps kept resident (4/6/8 depending on
+device tier).
+
+- Soft queue cap (**80** per session) plus a live **memory budget**
   (`MemoryPressureMonitor`) based on device RAM, free memory, and thermal state.
 - Capture/import are gated before work starts; under pressure the app streams
   decode→process→append (never holds a full import batch), drops concurrency to
-  one-at-a-time, and shrinks Vision / Studio AI long-edge caps.
-- Purge ladder on memory warnings: background caches → cutout cache → originals →
-  off-screen processed bitmaps (reload from disk) → cancel bulk jobs.
+  one-at-a-time, and shrinks the polish long-edge cap further (3072 → 2560 → 2048).
+- Purge ladder runs at every pressure level (including normal): background caches →
+  cutout cache → originals → off-screen processed bitmaps (reload from disk) →
+  cancel bulk jobs under critical pressure.
 - **MemoryGuidanceSheet** shows tips and recommended actions before the session
   becomes hard to use.
 
@@ -159,12 +161,12 @@ Stock API keys are loaded from `ProductStudioPro/Config/Secrets.local.xcconfig`
 | --- | --- |
 | `ProductStudioProApp.swift` | App entry, session environment, background flush hook. |
 | `Models.swift` | Data models, `CaptureSessionStore`, `ExportPhotoFilter`, naming, export helpers. |
-| `ImageProcessor.swift` | Vision cutout + Core Image polish / styles / upscale pipeline. |
+| `ImageProcessor.swift` | Vision cutout + Core Image Standard Clean polish / styles pipeline. |
 | `SessionDiskStore.swift` | Queue persistence (PNG originals, JPEG processed), generation-safe saves, ZIP export writer. |
 | `HomeView.swift` | Dashboard, templates, import flows, How It Works, session status. |
 | `MemoryPressureMonitor.swift` | Device memory budget, pressure levels, capacity gates. |
 | `MemoryGuidanceSheet.swift` | Tips / recommended actions when memory is elevated. |
-| `CaptureFlowView.swift` | Single/batch camera flow, Capture Quality Assistant. |
+| `CaptureFlowView.swift` | Single/batch camera flow. |
 | `CameraCaptureView.swift` | AVFoundation camera wrapper. |
 | `QueueView.swift` | Queue list, bulk actions, session/export chrome. |
 | `ImagePreviewPagerView.swift` | Full-screen Photos-style preview, edit sheets, markup entry. |

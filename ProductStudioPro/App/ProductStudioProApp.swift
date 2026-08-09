@@ -11,6 +11,7 @@ struct ProductStudioProApp: App {
             SplashAnimationView {
                 HomeView()
                     .environmentObject(session)
+                    .environmentObject(loadingState)
                     .environment(\.loadingState, loadingState)
                     .withInteractionFeedback()
                     .background {

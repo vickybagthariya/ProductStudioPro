@@ -129,6 +129,7 @@ enum ProductCompositeRenderer {
         subjectRotationDegrees: Double,
         flipHorizontal: Bool,
         flipVertical: Bool,
+        studioShadow: SoftSyntheticShadowSettings = .studioDefault,
         maxBackgroundLongEdge: CGFloat? = nil
     ) -> UIImage {
         // Always despill soft-matte fringe once so Format/reset/Apply never paint white edge stains.
@@ -192,6 +193,16 @@ enum ProductCompositeRenderer {
                 if BackgroundFillRenderer.needsShelfPlinth(fillSpec) {
                     ImageProcessor.drawShelfPlinthPublic(in: canvasRect, productRect: rect, context: ctx, primary: backgroundColor, secondary: secondaryBackgroundColor)
                 }
+                SoftSyntheticShadowEngine.draw(
+                    in: ctx,
+                    cutout: cleanedCutout,
+                    productRect: rect,
+                    canvasSize: canvas,
+                    rotationDegrees: subjectRotationDegrees,
+                    flipHorizontal: flipHorizontal,
+                    flipVertical: flipVertical,
+                    settings: studioShadow
+                )
                 drawProduct(cleanedCutout, in: rect, rotationDegrees: subjectRotationDegrees, flipH: flipHorizontal, flipV: flipVertical, context: ctx)
             }
         }

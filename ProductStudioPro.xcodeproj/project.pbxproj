@@ -13,7 +13,14 @@
 		23FC36B8E6894AA6A2F93615 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 076BBDA1608D4E2B8697248D /* Theme.swift */; };
 		267C7A0832E64CFCB7FD4AC4 /* BarcodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E15C3847D2D44C5B2ABD0DD /* BarcodeScannerView.swift */; };
 		5E6F2D3B5FF0491E99C0B640 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98B5DC643764A48B217E551 /* Models.swift */; };
+		WFP000010000000000000001 /* StudioPreset.swift in Sources */ = {isa = PBXBuildFile; fileRef = WFP000010000000000000002 /* StudioPreset.swift */; };
 		6320334FE4154418B5D0FCA6 /* CaptureFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92F39215BEFC4D5AA87711D9 /* CaptureFlowView.swift */; };
+		CAP000010000000000000001 /* CaptureWorkflowModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000010000000000000002 /* CaptureWorkflowModels.swift */; };
+		CAP000020000000000000001 /* CaptureFlowScaffold.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000020000000000000002 /* CaptureFlowScaffold.swift */; };
+		CAP000030000000000000001 /* CaptureWorkflowViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000030000000000000002 /* CaptureWorkflowViews.swift */; };
+		CAP000040000000000000001 /* CaptureCameraSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000040000000000000002 /* CaptureCameraSections.swift */; };
+		CAP000050000000000000001 /* CaptureProductIdentificationSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000050000000000000002 /* CaptureProductIdentificationSection.swift */; };
+		CAP000060000000000000001 /* CapturePreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAP000060000000000000002 /* CapturePreviewSupport.swift */; };
 		6651F6E306C2409DA629FB57 /* ProductStudioProApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94AE16AA585C4EEB9D8C3222 /* ProductStudioProApp.swift */; };
 		70FE87AC6880496AAC3DD03C /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1742D33B4914C4BBEE60F3F /* QueueView.swift */; };
 		AA0000010000000000000001 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000000002 /* LaunchScreen.storyboard */; };
@@ -70,7 +77,43 @@
 		AA0000710000000000000001 /* CatalogLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000710000000000000002 /* CatalogLogicTests.swift */; };
 		AA0000800000000000000001 /* CatalogTemplatePack.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000800000000000000002 /* CatalogTemplatePack.swift */; };
 		AA0000810000000000000001 /* SyncLookSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000810000000000000002 /* SyncLookSheet.swift */; };
-		AA0000820000000000000001 /* ExportShareRecipes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000820000000000000002 /* ExportShareRecipes.swift */; };
+		AA0000990000000000000001 /* AIPolishTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000990000000000000002 /* AIPolishTypes.swift */; };
+		AA00009A0000000000000001 /* AIPolishEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00009A0000000000000002 /* AIPolishEngine.swift */; };
+		AA00009B0000000000000001 /* AIPolishEnhanceButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00009B0000000000000002 /* AIPolishEnhanceButton.swift */; };
+		AA0000A000000000000001 /* SoftSyntheticShadowSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A000000000000002 /* SoftSyntheticShadowSettings.swift */; };
+		AA0000A100000000000001 /* SoftSyntheticShadowEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A100000000000002 /* SoftSyntheticShadowEngine.swift */; };
+		AA0000A200000000000001 /* MarketplaceExportProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A200000000000002 /* MarketplaceExportProfile.swift */; };
+		AA0000A300000000000001 /* CSVExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A300000000000002 /* CSVExporter.swift */; };
+		AA0000A400000000000001 /* ManifestGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A400000000000002 /* ManifestGenerator.swift */; };
+		AA0000A500000000000001 /* ZipExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A500000000000002 /* ZipExporter.swift */; };
+		AA0000A600000000000001 /* ExportPackageEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000A600000000000002 /* ExportPackageEngine.swift */; };
+		AA0000B100000000000001 /* ProductMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B100000000000002 /* ProductMetadata.swift */; };
+		AA0000B200000000000001 /* ImageMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B200000000000002 /* ImageMetadata.swift */; };
+		AA0000B300000000000001 /* ProjectMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B300000000000002 /* ProjectMetadata.swift */; };
+		AA0000B400000000000001 /* Product.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B400000000000002 /* Product.swift */; };
+		AA0000B500000000000001 /* ImageAsset.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B500000000000002 /* ImageAsset.swift */; };
+		AA0000B600000000000001 /* MetadataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B600000000000002 /* MetadataStore.swift */; };
+		AA0000B700000000000001 /* MetadataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000B700000000000002 /* MetadataManager.swift */; };
+		AA0000C100000000000001 /* PSDesignColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C100000000000002 /* PSDesignColors.swift */; };
+		AA0000C200000000000001 /* PSDesignTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C200000000000002 /* PSDesignTypography.swift */; };
+		AA0000C300000000000001 /* PSDesignSpacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C300000000000002 /* PSDesignSpacing.swift */; };
+		AA0000C400000000000001 /* PSDesignRadius.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C400000000000002 /* PSDesignRadius.swift */; };
+		AA0000C500000000000001 /* PSDesignShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C500000000000002 /* PSDesignShadow.swift */; };
+		AA0000C600000000000001 /* PSDesignMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C600000000000002 /* PSDesignMotion.swift */; };
+		AA0000C700000000000001 /* PSDesignHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C700000000000002 /* PSDesignHaptics.swift */; };
+		AA0000C800000000000001 /* PSButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C800000000000002 /* PSButtons.swift */; };
+		AA0000C900000000000001 /* PSCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000C900000000000002 /* PSCards.swift */; };
+		AA0000CA000000000000001 /* PSChips.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000CA000000000000002 /* PSChips.swift */; };
+		AA0000CB000000000000001 /* PSDesignIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000CB000000000000002 /* PSDesignIcons.swift */; };
+		AA0000CC000000000000001 /* PSDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000CC000000000000002 /* PSDesignSystem.swift */; };
+		AA0000D100000000000001 /* HomeScreenHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D100000000000002 /* HomeScreenHeader.swift */; };
+		AA0000D200000000000001 /* HomeCreationCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D200000000000002 /* HomeCreationCard.swift */; };
+		AA0000D300000000000001 /* HomeWorkflowShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D300000000000002 /* HomeWorkflowShortcuts.swift */; };
+		AA0000D400000000000001 /* HomeContinueWorkingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D400000000000002 /* HomeContinueWorkingSection.swift */; };
+		AA0000D500000000000001 /* HomeImportSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D500000000000002 /* HomeImportSupport.swift */; };
+		AA0000D600000000000001 /* HomePreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D600000000000002 /* HomePreviewSupport.swift */; };
+		AA0000D700000000000001 /* HomeImportSourceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D700000000000002 /* HomeImportSourceCatalog.swift */; };
+		AA0000D800000000000001 /* HomeMoreImportOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000D800000000000002 /* HomeMoreImportOptions.swift */; };
 		AA0000830000000000000001 /* CutoutEdgeBrushSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000830000000000000002 /* CutoutEdgeBrushSheet.swift */; };
 		AA0000840000000000000001 /* ToneAdjustSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000840000000000000002 /* ToneAdjustSheet.swift */; };
 		B1FEED010000000000000001 /* InteractionFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1FEED020000000000000002 /* InteractionFeedback.swift */; };
@@ -95,6 +138,12 @@
 		3F11CF1F1E2B411D934EA4AE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4E15C3847D2D44C5B2ABD0DD /* BarcodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeScannerView.swift; sourceTree = "<group>"; };
 		92F39215BEFC4D5AA87711D9 /* CaptureFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureFlowView.swift; sourceTree = "<group>"; };
+		CAP000010000000000000002 /* CaptureWorkflowModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureWorkflowModels.swift; sourceTree = "<group>"; };
+		CAP000020000000000000002 /* CaptureFlowScaffold.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureFlowScaffold.swift; sourceTree = "<group>"; };
+		CAP000030000000000000002 /* CaptureWorkflowViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureWorkflowViews.swift; sourceTree = "<group>"; };
+		CAP000040000000000000002 /* CaptureCameraSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCameraSections.swift; sourceTree = "<group>"; };
+		CAP000050000000000000002 /* CaptureProductIdentificationSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureProductIdentificationSection.swift; sourceTree = "<group>"; };
+		CAP000060000000000000002 /* CapturePreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePreviewSupport.swift; sourceTree = "<group>"; };
 		94AE16AA585C4EEB9D8C3222 /* ProductStudioProApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductStudioProApp.swift; sourceTree = "<group>"; };
 		9CE5597BD693499CAD05012C /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
 		AA0000010000000000000002 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -153,11 +202,48 @@
 		AA0000710000000000000002 /* CatalogLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogLogicTests.swift; sourceTree = "<group>"; };
 		AA0000800000000000000002 /* CatalogTemplatePack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTemplatePack.swift; sourceTree = "<group>"; };
 		AA0000810000000000000002 /* SyncLookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncLookSheet.swift; sourceTree = "<group>"; };
-		AA0000820000000000000002 /* ExportShareRecipes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportShareRecipes.swift; sourceTree = "<group>"; };
+		AA0000990000000000000002 /* AIPolishTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPolishTypes.swift; sourceTree = "<group>"; };
+		AA00009A0000000000000002 /* AIPolishEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPolishEngine.swift; sourceTree = "<group>"; };
+		AA00009B0000000000000002 /* AIPolishEnhanceButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPolishEnhanceButton.swift; sourceTree = "<group>"; };
+		AA0000A000000000000002 /* SoftSyntheticShadowSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoftSyntheticShadowSettings.swift; sourceTree = "<group>"; };
+		AA0000A100000000000002 /* SoftSyntheticShadowEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoftSyntheticShadowEngine.swift; sourceTree = "<group>"; };
+		AA0000A200000000000002 /* MarketplaceExportProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceExportProfile.swift; sourceTree = "<group>"; };
+		AA0000A300000000000002 /* CSVExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSVExporter.swift; sourceTree = "<group>"; };
+		AA0000A400000000000002 /* ManifestGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestGenerator.swift; sourceTree = "<group>"; };
+		AA0000A500000000000002 /* ZipExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZipExporter.swift; sourceTree = "<group>"; };
+		AA0000A600000000000002 /* ExportPackageEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportPackageEngine.swift; sourceTree = "<group>"; };
+		AA0000B100000000000002 /* ProductMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductMetadata.swift; sourceTree = "<group>"; };
+		AA0000B200000000000002 /* ImageMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageMetadata.swift; sourceTree = "<group>"; };
+		AA0000B300000000000002 /* ProjectMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectMetadata.swift; sourceTree = "<group>"; };
+		AA0000B400000000000002 /* Product.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Product.swift; sourceTree = "<group>"; };
+		AA0000B500000000000002 /* ImageAsset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAsset.swift; sourceTree = "<group>"; };
+		AA0000B600000000000002 /* MetadataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataStore.swift; sourceTree = "<group>"; };
+		AA0000B700000000000002 /* MetadataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataManager.swift; sourceTree = "<group>"; };
+		AA0000C100000000000002 /* PSDesignColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignColors.swift; sourceTree = "<group>"; };
+		AA0000C200000000000002 /* PSDesignTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignTypography.swift; sourceTree = "<group>"; };
+		AA0000C300000000000002 /* PSDesignSpacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignSpacing.swift; sourceTree = "<group>"; };
+		AA0000C400000000000002 /* PSDesignRadius.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignRadius.swift; sourceTree = "<group>"; };
+		AA0000C500000000000002 /* PSDesignShadow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignShadow.swift; sourceTree = "<group>"; };
+		AA0000C600000000000002 /* PSDesignMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignMotion.swift; sourceTree = "<group>"; };
+		AA0000C700000000000002 /* PSDesignHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignHaptics.swift; sourceTree = "<group>"; };
+		AA0000C800000000000002 /* PSButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSButtons.swift; sourceTree = "<group>"; };
+		AA0000C900000000000002 /* PSCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSCards.swift; sourceTree = "<group>"; };
+		AA0000CA000000000000002 /* PSChips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSChips.swift; sourceTree = "<group>"; };
+		AA0000CB000000000000002 /* PSDesignIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignIcons.swift; sourceTree = "<group>"; };
+		AA0000CC000000000000002 /* PSDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PSDesignSystem.swift; sourceTree = "<group>"; };
+		AA0000D100000000000002 /* HomeScreenHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeScreenHeader.swift; sourceTree = "<group>"; };
+		AA0000D200000000000002 /* HomeCreationCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeCreationCard.swift; sourceTree = "<group>"; };
+		AA0000D300000000000002 /* HomeWorkflowShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeWorkflowShortcuts.swift; sourceTree = "<group>"; };
+		AA0000D400000000000002 /* HomeContinueWorkingSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeContinueWorkingSection.swift; sourceTree = "<group>"; };
+		AA0000D500000000000002 /* HomeImportSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeImportSupport.swift; sourceTree = "<group>"; };
+		AA0000D600000000000002 /* HomePreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomePreviewSupport.swift; sourceTree = "<group>"; };
+		AA0000D700000000000002 /* HomeImportSourceCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeImportSourceCatalog.swift; sourceTree = "<group>"; };
+		AA0000D800000000000002 /* HomeMoreImportOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeMoreImportOptions.swift; sourceTree = "<group>"; };
 		AA0000830000000000000002 /* CutoutEdgeBrushSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CutoutEdgeBrushSheet.swift; sourceTree = "<group>"; };
 		AA0000840000000000000002 /* ToneAdjustSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToneAdjustSheet.swift; sourceTree = "<group>"; };
 		B1FEED020000000000000002 /* InteractionFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionFeedback.swift; sourceTree = "<group>"; };
 		B98B5DC643764A48B217E551 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		WFP000010000000000000002 /* StudioPreset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioPreset.swift; sourceTree = "<group>"; };
 		DBC477C3D9184A349799018D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		DD62493125D7416BA838D6FF /* CameraCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureView.swift; sourceTree = "<group>"; };
 		F1742D33B4914C4BBEE60F3F /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
@@ -238,19 +324,68 @@
 			isa = PBXGroup;
 			children = (
 				AA0000320000000000000002 /* Models */,
+				AA0000B800000000000002 /* Metadata */,
+				AA00009C0000000000000002 /* Polish */,
+				AA00009F0000000000000002 /* Shadow */,
+				AA0000A700000000000002 /* Export */,
 				AA0000330000000000000002 /* Persistence */,
 				AA0000340000000000000002 /* Utilities */,
 			);
 			path = Core;
 			sourceTree = "<group>";
 		};
+		AA0000B800000000000002 /* Metadata */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000B100000000000002 /* ProductMetadata.swift */,
+				AA0000B200000000000002 /* ImageMetadata.swift */,
+				AA0000B300000000000002 /* ProjectMetadata.swift */,
+				AA0000B400000000000002 /* Product.swift */,
+				AA0000B500000000000002 /* ImageAsset.swift */,
+				AA0000B600000000000002 /* MetadataStore.swift */,
+				AA0000B700000000000002 /* MetadataManager.swift */,
+			);
+			path = Metadata;
+			sourceTree = "<group>";
+		};
 		AA0000320000000000000002 /* Models */ = {
 			isa = PBXGroup;
 			children = (
 				B98B5DC643764A48B217E551 /* Models.swift */,
+				WFP000010000000000000002 /* StudioPreset.swift */,
 				AA0000600000000000000002 /* ImageProcessor.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		AA00009C0000000000000002 /* Polish */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000990000000000000002 /* AIPolishTypes.swift */,
+				AA00009A0000000000000002 /* AIPolishEngine.swift */,
+			);
+			path = Polish;
+			sourceTree = "<group>";
+		};
+		AA00009F0000000000000002 /* Shadow */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000A000000000000002 /* SoftSyntheticShadowSettings.swift */,
+				AA0000A100000000000002 /* SoftSyntheticShadowEngine.swift */,
+			);
+			path = Shadow;
+			sourceTree = "<group>";
+		};
+		AA0000A700000000000002 /* Export */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000A200000000000002 /* MarketplaceExportProfile.swift */,
+				AA0000A300000000000002 /* CSVExporter.swift */,
+				AA0000A400000000000002 /* ManifestGenerator.swift */,
+				AA0000A500000000000002 /* ZipExporter.swift */,
+				AA0000A600000000000002 /* ExportPackageEngine.swift */,
+			);
+			path = Export;
 			sourceTree = "<group>";
 		};
 		AA0000330000000000000002 /* Persistence */ = {
@@ -276,11 +411,39 @@
 		AA0000350000000000000002 /* DesignSystem */ = {
 			isa = PBXGroup;
 			children = (
+				AA0000CD000000000000002 /* Tokens */,
+				AA0000CE000000000000002 /* Components */,
+				AA0000CC000000000000002 /* PSDesignSystem.swift */,
+				AA0000CB000000000000002 /* PSDesignIcons.swift */,
 				AA00000D0000000000000002 /* DesignSystem.swift */,
 				076BBDA1608D4E2B8697248D /* Theme.swift */,
 				AA0000190000000000000002 /* DSDropdownSystem.swift */,
 			);
 			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		AA0000CD000000000000002 /* Tokens */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000C100000000000002 /* PSDesignColors.swift */,
+				AA0000C200000000000002 /* PSDesignTypography.swift */,
+				AA0000C300000000000002 /* PSDesignSpacing.swift */,
+				AA0000C400000000000002 /* PSDesignRadius.swift */,
+				AA0000C500000000000002 /* PSDesignShadow.swift */,
+				AA0000C600000000000002 /* PSDesignMotion.swift */,
+				AA0000C700000000000002 /* PSDesignHaptics.swift */,
+			);
+			path = Tokens;
+			sourceTree = "<group>";
+		};
+		AA0000CE000000000000002 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000C800000000000002 /* PSButtons.swift */,
+				AA0000C900000000000002 /* PSCards.swift */,
+				AA0000CA000000000000002 /* PSChips.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 		AA0000360000000000000002 /* Features */ = {
@@ -298,6 +461,7 @@
 				AA0000400000000000000002 /* Rendering */,
 				AA0000410000000000000002 /* GroupedCover */,
 				AA0000540000000000000002 /* BrandMark */,
+				AA00009D0000000000000002 /* Polish */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -306,6 +470,14 @@
 			isa = PBXGroup;
 			children = (
 				F96D7DB79F29478FBE113EED /* HomeView.swift */,
+				AA0000D100000000000002 /* HomeScreenHeader.swift */,
+				AA0000D200000000000002 /* HomeCreationCard.swift */,
+				AA0000D300000000000002 /* HomeWorkflowShortcuts.swift */,
+				AA0000D400000000000002 /* HomeContinueWorkingSection.swift */,
+				AA0000D500000000000002 /* HomeImportSupport.swift */,
+				AA0000D700000000000002 /* HomeImportSourceCatalog.swift */,
+				AA0000D800000000000002 /* HomeMoreImportOptions.swift */,
+				AA0000D600000000000002 /* HomePreviewSupport.swift */,
 				AA0000800000000000000002 /* CatalogTemplatePack.swift */,
 				AA0000910000000000000002 /* MemoryGuidanceSheet.swift */,
 			);
@@ -316,6 +488,12 @@
 			isa = PBXGroup;
 			children = (
 				92F39215BEFC4D5AA87711D9 /* CaptureFlowView.swift */,
+				CAP000010000000000000002 /* CaptureWorkflowModels.swift */,
+				CAP000020000000000000002 /* CaptureFlowScaffold.swift */,
+				CAP000030000000000000002 /* CaptureWorkflowViews.swift */,
+				CAP000040000000000000002 /* CaptureCameraSections.swift */,
+				CAP000050000000000000002 /* CaptureProductIdentificationSection.swift */,
+				CAP000060000000000000002 /* CapturePreviewSupport.swift */,
 				DD62493125D7416BA838D6FF /* CameraCaptureView.swift */,
 				AA0000420000000000000002 /* CameraSessionSettings.swift */,
 				4E15C3847D2D44C5B2ABD0DD /* BarcodeScannerView.swift */,
@@ -330,7 +508,6 @@
 				AA0000620000000000000002 /* QueueSupportViews.swift */,
 				AA0000500000000000000002 /* ExportShareOptionsSheet.swift */,
 				AA0000810000000000000002 /* SyncLookSheet.swift */,
-				AA0000820000000000000002 /* ExportShareRecipes.swift */,
 				AA0000510000000000000002 /* AddToSessionFolderSheet.swift */,
 			);
 			path = Queue;
@@ -435,6 +612,14 @@
 				AA0000530000000000000002 /* BrandMarkEditorView.swift */,
 			);
 			path = BrandMark;
+			sourceTree = "<group>";
+		};
+		AA00009D0000000000000002 /* Polish */ = {
+			isa = PBXGroup;
+			children = (
+				AA00009B0000000000000002 /* AIPolishEnhanceButton.swift */,
+			);
+			path = Polish;
 			sourceTree = "<group>";
 		};
 		AA0000640000000000000002 /* Config */ = {
@@ -559,6 +744,18 @@
 				AA0000290000000000000001 /* SplashAnimationView.swift in Sources */,
 				23FC36B8E6894AA6A2F93615 /* Theme.swift in Sources */,
 				AA00000D0000000000000001 /* DesignSystem.swift in Sources */,
+				AA0000C100000000000001 /* PSDesignColors.swift in Sources */,
+				AA0000C200000000000001 /* PSDesignTypography.swift in Sources */,
+				AA0000C300000000000001 /* PSDesignSpacing.swift in Sources */,
+				AA0000C400000000000001 /* PSDesignRadius.swift in Sources */,
+				AA0000C500000000000001 /* PSDesignShadow.swift in Sources */,
+				AA0000C600000000000001 /* PSDesignMotion.swift in Sources */,
+				AA0000C700000000000001 /* PSDesignHaptics.swift in Sources */,
+				AA0000C800000000000001 /* PSButtons.swift in Sources */,
+				AA0000C900000000000001 /* PSCards.swift in Sources */,
+				AA0000CA000000000000001 /* PSChips.swift in Sources */,
+				AA0000CB000000000000001 /* PSDesignIcons.swift in Sources */,
+				AA0000CC000000000000001 /* PSDesignSystem.swift in Sources */,
 				AA0000190000000000000001 /* DSDropdownSystem.swift in Sources */,
 				AA00000E0000000000000001 /* StylePreviewThumbnailRenderer.swift in Sources */,
 				AA00000F0000000000000001 /* PreviewZoomGestures.swift in Sources */,
@@ -566,11 +763,28 @@
 				AA0000110000000000000001 /* ClipboardURLImageImport.swift in Sources */,
 				AA0000120000000000000001 /* PasteOrURLImportSheet.swift in Sources */,
 				5E6F2D3B5FF0491E99C0B640 /* Models.swift in Sources */,
+				WFP000010000000000000001 /* StudioPreset.swift in Sources */,
 				AA0000600000000000000001 /* ImageProcessor.swift in Sources */,
 				AA0000610000000000000001 /* ImagePreviewPagerView.swift in Sources */,
 				AA0000620000000000000001 /* QueueSupportViews.swift in Sources */,
 				AA0000810000000000000001 /* SyncLookSheet.swift in Sources */,
-				AA0000820000000000000001 /* ExportShareRecipes.swift in Sources */,
+				AA0000990000000000000001 /* AIPolishTypes.swift in Sources */,
+				AA00009A0000000000000001 /* AIPolishEngine.swift in Sources */,
+				AA00009B0000000000000001 /* AIPolishEnhanceButton.swift in Sources */,
+				AA0000A000000000000001 /* SoftSyntheticShadowSettings.swift in Sources */,
+				AA0000A100000000000001 /* SoftSyntheticShadowEngine.swift in Sources */,
+				AA0000A200000000000001 /* MarketplaceExportProfile.swift in Sources */,
+				AA0000A300000000000001 /* CSVExporter.swift in Sources */,
+				AA0000A400000000000001 /* ManifestGenerator.swift in Sources */,
+				AA0000A500000000000001 /* ZipExporter.swift in Sources */,
+				AA0000A600000000000001 /* ExportPackageEngine.swift in Sources */,
+				AA0000B100000000000001 /* ProductMetadata.swift in Sources */,
+				AA0000B200000000000001 /* ImageMetadata.swift in Sources */,
+				AA0000B300000000000001 /* ProjectMetadata.swift in Sources */,
+				AA0000B400000000000001 /* Product.swift in Sources */,
+				AA0000B500000000000001 /* ImageAsset.swift in Sources */,
+				AA0000B600000000000001 /* MetadataStore.swift in Sources */,
+				AA0000B700000000000001 /* MetadataManager.swift in Sources */,
 				AA0000830000000000000001 /* CutoutEdgeBrushSheet.swift in Sources */,
 				AA0000840000000000000001 /* ToneAdjustSheet.swift in Sources */,
 				03871152C2654EEB8FBFA005 /* Feedback.swift in Sources */,
@@ -579,8 +793,22 @@
 				AA0000900000000000000001 /* MemoryPressureMonitor.swift in Sources */,
 				AA0000910000000000000001 /* MemoryGuidanceSheet.swift in Sources */,
 				0E35B87C203F405CB7E43CE0 /* HomeView.swift in Sources */,
+				AA0000D100000000000001 /* HomeScreenHeader.swift in Sources */,
+				AA0000D200000000000001 /* HomeCreationCard.swift in Sources */,
+				AA0000D300000000000001 /* HomeWorkflowShortcuts.swift in Sources */,
+				AA0000D400000000000001 /* HomeContinueWorkingSection.swift in Sources */,
+				AA0000D500000000000001 /* HomeImportSupport.swift in Sources */,
+				AA0000D700000000000001 /* HomeImportSourceCatalog.swift in Sources */,
+				AA0000D800000000000001 /* HomeMoreImportOptions.swift in Sources */,
+				AA0000D600000000000001 /* HomePreviewSupport.swift in Sources */,
 				AA0000800000000000000001 /* CatalogTemplatePack.swift in Sources */,
 				6320334FE4154418B5D0FCA6 /* CaptureFlowView.swift in Sources */,
+				CAP000010000000000000001 /* CaptureWorkflowModels.swift in Sources */,
+				CAP000020000000000000001 /* CaptureFlowScaffold.swift in Sources */,
+				CAP000030000000000000001 /* CaptureWorkflowViews.swift in Sources */,
+				CAP000040000000000000001 /* CaptureCameraSections.swift in Sources */,
+				CAP000050000000000000001 /* CaptureProductIdentificationSection.swift in Sources */,
+				CAP000060000000000000001 /* CapturePreviewSupport.swift in Sources */,
 				EFCCD88D1FF9489AA34BFAA9 /* CameraCaptureView.swift in Sources */,
 				AA0000420000000000000001 /* CameraSessionSettings.swift in Sources */,
 				267C7A0832E64CFCB7FD4AC4 /* BarcodeScannerView.swift in Sources */,

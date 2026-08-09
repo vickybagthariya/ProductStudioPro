@@ -882,7 +882,7 @@ struct DSCaptureToast: View {
     }
 }
 
-/// Styled in-app prompt for capture flow (duplicate UPC, quality warning) — avoids stacked UIKit alerts.
+/// Styled in-app prompt for capture flow (duplicate UPC) — avoids stacked UIKit alerts.
 struct CaptureFlowPromptOverlay: View {
     let icon: String
     let iconColor: Color
@@ -1231,70 +1231,6 @@ struct GlassPreviewButtonStyle: ButtonStyle {
             .animation(DS.Motion.pressSpring, value: configuration.isPressed)
             .onChange(of: configuration.isPressed) { _, pressed in
                 if pressed { InteractionHaptics.tapPreferringSettings() }
-            }
-    }
-}
-
-/// Universal quality chip background — readable in light and dark mode.
-struct PreviewQualityGlassChipBackground: View {
-    var isSelected: Bool
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
-            .fill(
-                isSelected
-                    ? DS.ColorToken.accent.opacity(colorScheme == .dark ? 0.30 : 0.16)
-                    : DS.ColorToken.backgroundTertiary
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? DS.ColorToken.accent : DS.ColorToken.separator,
-                        lineWidth: isSelected ? 2 : 1
-                    )
-            )
-    }
-}
-
-/// Equal-width quality chip for the Edit & Polish row.
-struct PreviewQualityGlassChip: View {
-    let title: String
-    var isSelected: Bool = false
-    var showsChevron: Bool = false
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Text(title)
-                .font(DS.TypeScale.nano)
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
-            if showsChevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .heavy))
-                    .opacity(0.85)
-            }
-        }
-        .foregroundStyle(isSelected ? DS.ColorToken.accent : DS.ColorToken.label)
-        .frame(maxWidth: .infinity)
-        .frame(height: 36)
-        .background { PreviewQualityGlassChipBackground(isSelected: isSelected) }
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
-    }
-}
-
-struct PreviewQualityGlassButtonStyle: ButtonStyle {
-    var isDisabled: Bool = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(isDisabled ? DS.Motion.disabledOpacity : 1)
-            .saturation(isDisabled ? DS.Motion.disabledSaturation : 1)
-            .scaleEffect(configuration.isPressed && !isDisabled ? DS.Motion.pressScaleCompact : 1)
-            .brightness(configuration.isPressed && !isDisabled ? -0.04 : 0)
-            .animation(DS.Motion.pressSpring, value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, pressed in
-                if pressed, !isDisabled { InteractionHaptics.tapPreferringSettings() }
             }
     }
 }

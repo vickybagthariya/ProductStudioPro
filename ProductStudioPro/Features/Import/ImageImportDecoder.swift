@@ -1,7 +1,7 @@
 import ImageIO
 import UIKit
 
-private let importDecodeMaxLongEdgeCap = Int(CaptureQualityLimits.importMaxLongEdge)
+private let importDecodeMaxLongEdgeCap = Int(ImageProcessingLimits.importMaxLongEdge)
 
 /// Decodes photos at a bounded pixel size to avoid full-resolution `UIImage(data:)` peaks during bulk import.
 enum ImageImportDecoder {

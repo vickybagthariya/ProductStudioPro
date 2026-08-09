@@ -1,23 +1,5 @@
 import SwiftUI
 
-private enum CaptureWizardStep: Int, CaseIterable, Identifiable {
-    case scan = 0
-    case shoot = 1
-    case review = 2
-    case confirm = 3
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .scan: return "Scan"
-        case .shoot: return "Shoot"
-        case .review: return "Review"
-        case .confirm: return "Confirm"
-        }
-    }
-}
-
 struct CaptureFlowView: View {
     @EnvironmentObject private var session: CaptureSessionStore
     let mode: CaptureMode
@@ -26,23 +8,27 @@ struct CaptureFlowView: View {
     @FocusState private var manualNameFocused: Bool
 
     @State private var activeMode: CaptureMode
+    @State private var selectedCaptureMode: CaptureMode?
+    @State private var workflowKind: CaptureWorkflowKind?
+    @State private var hasConfirmedWorkflow = false
+    @State private var skippedWorkflowSelection = false
+    @State private var enteredViaMultiAngleShortcut = false
+    @State private var showMultiAngleHomeSetup = false
     @State private var showNativeCamera = false
     @State private var showScanner = false
     @State private var showAddedToast = false
     @State private var showBatchSummaryToast = false
     @State private var batchSummaryMessage = ""
     @State private var sharePayload: SharePayload?
-    @State private var instruction = "Tap Capture Product Photo to begin."
+    @State private var instruction = "Tap Capture to begin."
     @State private var pendingDuplicateName = ""
     @State private var manualNameInput = ""
     @State private var previewIndex: Int?
-    @State private var qualityReport: CaptureQualityReport?
     @State private var activeOverlay: CaptureFlowOverlay?
     @State private var showBatchCameraAlert = false
     @State private var pendingAutoOpenCamera = false
     @State private var batchContinuousPaused = false
     @State private var batchSessionStartCount = 0
-    @State private var batchQualityWarnings = 0
     @State private var pendingExitAction: (() -> Void)?
     @State private var pendingAfterCameraWorkItem: DispatchWorkItem?
     @State private var didInitializeCaptureFlow = false
@@ -55,14 +41,44 @@ struct CaptureFlowView: View {
     @State private var pendingCameraWorkItem: DispatchWorkItem?
     @State private var autoOpenRetryCount = 0
     @State private var scannerEpoch = 0
+    @State private var scrollTargetID: String?
+    @State private var captureAutoScrollGeneration = 0
+    @State private var consumedAutoScrollGeneration = 0
 
     init(mode: CaptureMode) {
         self.mode = mode
         _activeMode = State(initialValue: mode)
+        _selectedCaptureMode = State(initialValue: nil)
     }
 
-    private var screenTitle: String {
-        activeMode == .batch ? "Batch Mode" : "Single Product Capture"
+    // MARK: - Derived state
+
+    private var stepContext: CaptureStepContext {
+        CaptureStepContext(
+            hasConfirmedWorkflow: hasConfirmedWorkflow,
+            showsIdentification: shouldShowIdentification,
+            isReadyToQueue: isReadyToQueue
+        )
+    }
+
+    private var batchCapturedThisSession: Int {
+        max(0, session.products.count - batchSessionStartCount)
+    }
+
+    private var shouldShowIdentification: Bool {
+        guard hasConfirmedWorkflow else { return false }
+        if session.isAwaitingMultiAngleName { return true }
+        if session.currentImage != nil { return true }
+        return showScanner || showManualUPCEntry
+    }
+
+    private var isReadyToQueue: Bool {
+        if session.imageNamingMode == .randomName { return session.currentImage != nil || session.isAwaitingMultiAngleName }
+        if showManualUPCEntry || (session.imageNamingMode == .manualInput && (session.currentImage != nil || session.isAwaitingMultiAngleName)) {
+            let text = session.imageNamingMode == .manualInput && !showManualUPCEntry ? manualNameInput : session.currentUPC
+            return !FileNameRules.captureLabel(from: text).isEmpty
+        }
+        return false
     }
 
     private var canSwitchCaptureMode: Bool {
@@ -74,137 +90,111 @@ struct CaptureFlowView: View {
             && session.pendingMultiAngleCaptures.isEmpty
             && activeOverlay == nil
             && !showNativeCamera
+            && hasConfirmedWorkflow
     }
 
-    private var screenSubtitle: String {
+    private var screenTitle: String {
+        guard hasConfirmedWorkflow, let workflowKind else { return "Capture" }
+        switch workflowKind {
+        case .standardCapture:
+            return activeMode == .batch ? "Batch Capture" : "Single Capture"
+        case .multiAngle:
+            return activeMode == .batch ? "Multi-Angle Batch" : "Multi-Angle Capture"
+        }
+    }
+
+    private var screenSubtitle: String? {
+        guard hasConfirmedWorkflow else { return nil }
         if session.multiAngleEnabled {
-            let done = session.pendingMultiAngleCaptures.count
             let total = session.activeAngles.count
             if session.isAwaitingMultiAngleName {
-                return "Name set · Product #\(session.nextSequence)"
+                return "All angles captured · Product #\(session.nextSequence)"
             }
-            return "\(session.currentAngleLabel) \(done)/\(total) · Product #\(session.nextSequence)"
+            let current = min(session.currentAngleIndex + 1, total)
+            return "\(session.currentAngleLabel) · \(current)/\(total) · Product #\(session.nextSequence)"
         }
         return "Product #\(session.nextSequence)"
     }
 
-    private var isInConfirmStep: Bool {
-        if showManualUPCEntry { return true }
-        if session.isAwaitingMultiAngleName && session.imageNamingMode == .manualInput { return true }
-        if session.currentImage != nil && session.imageNamingMode == .manualInput && !showScanner { return true }
-        return false
+    private var completedAngleSet: Set<ProductAngle> {
+        Set(session.pendingMultiAngleCaptures.map(\.angle))
     }
 
-    private var isInScanStep: Bool {
-        showScanner
-            || (session.isAwaitingMultiAngleName && session.imageNamingMode == .scannedUPC && !showManualUPCEntry)
+    private var captureHeadline: String {
+        if session.currentImage != nil { return "Photo ready" }
+        if session.multiAngleEnabled { return "Capture \(session.currentAngleLabel)" }
+        return "Capture product photo"
     }
 
-    private var currentWizardStep: CaptureWizardStep {
-        if isInScanStep { return .scan }
-        if isInConfirmStep { return .confirm }
-        if qualityReport != nil, session.currentImage != nil { return .review }
-        return .shoot
+    private var captureDetail: String {
+        if session.currentImage != nil || session.isAwaitingMultiAngleName {
+            return "Identify the product below."
+        }
+        return instruction
     }
 
-    private var showsStudioGuidelines: Bool {
-        !(session.currentImage != nil && session.imageNamingMode == .scannedUPC)
+    private var captureButtonTitle: String {
+        session.currentImage == nil ? "Capture Photo" : "Retake Photo"
     }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
-            AppScreenScaffold(
+            CaptureFlowScaffold(
                 title: screenTitle,
                 subtitle: screenSubtitle,
-                showsHome: false,
-                onBack: { requestBatchExit { session.popNavigation() } },
-                onHome: { requestBatchExit { session.goHome() } },
-                layout: .scroll,
-                scrollDismissesKeyboardInteractively: showManualUPCEntry || (session.currentImage != nil && session.imageNamingMode == .manualInput),
-                headerAccessory: { queueHeaderButton }
+                queueCount: session.products.count,
+                onBack: handleBack,
+                onQueue: { session.navigationPath.append(AppRoute.queue) },
+                scrollDismissesKeyboardInteractively: showManualUPCEntry
+                    || ((session.currentImage != nil || session.isAwaitingMultiAngleName)
+                        && session.imageNamingMode == .manualInput),
+                scrollTargetID: $scrollTargetID
             ) {
-                captureModeToggle
-                captureWizardProgress
-                multiAngleCaptureControls
-                instructionBar
-                angleProgressBar
+                VStack(alignment: .leading, spacing: PSDesignSpacing.lg) {
+                    if hasConfirmedWorkflow {
+                        CaptureProgressIndicator(context: stepContext)
+                            .padding(.bottom, PSDesignSpacing.xs)
+                    }
 
-                if showScanner || (session.isAwaitingMultiAngleName && session.imageNamingMode == .scannedUPC && !showManualUPCEntry) {
-                    // Scanner first so it is on-screen without scrolling (faster perceived scan).
-                    DSCard(padding: 0) {
-                        BarcodeScannerView { code in handleName(code) }
-                            .id(scannerEpoch)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 360)
-                            .background(Color.black)
-                            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card - 2, style: .continuous))
-                    }
-                    pendingMultiAngleStrip
-                    if let image = session.currentImage {
-                        capturedPreview(image)
-                    }
-                    if showsStudioGuidelines {
-                        DSStudioGuidelinesPanel()
-                    }
-                    quickQueueButton
-                    manualUPCPanel
-                } else if showManualUPCEntry, session.currentImage != nil || session.isAwaitingMultiAngleName {
-                    pendingMultiAngleStrip
-                    namingAfterCapturePanel
-                } else if session.isAwaitingMultiAngleName && session.imageNamingMode == .manualInput {
-                    pendingMultiAngleStrip
-                    manualNamePanel
-                } else {
-                    captureReadyPanel
-                    if session.currentImage != nil && session.imageNamingMode == .manualInput {
-                        manualNamePanel
+                    if showMultiAngleHomeSetup {
+                        CaptureMultiAngleSetupSection(selectedCaptureMode: $selectedCaptureMode) {
+                            confirmMultiAngleHomeSetup()
+                        }
+                    } else if !hasConfirmedWorkflow {
+                        CaptureWorkflowSelectionSection(
+                            selectedWorkflow: $workflowKind,
+                            selectedCaptureMode: $selectedCaptureMode,
+                            onContinue: { confirmWorkflowSelection() }
+                        )
+                    } else {
+                        guidedCaptureContent
                     }
                 }
             }
-            .navigationBarHidden(true)
 
             if showAddedToast {
                 VStack {
                     Spacer()
-                    DSCaptureToast(text: "Added: \(lastAddedText)")
+                    CaptureFlowToast(text: "Added: \(lastAddedText)")
                         .padding(.bottom, 34)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(PSDesignMotion.slideUp)
             }
 
             if showBatchSummaryToast {
                 VStack {
                     Spacer()
-                    DSCaptureToast(text: batchSummaryMessage)
+                    CaptureFlowToast(text: batchSummaryMessage)
                         .padding(.bottom, 34)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(PSDesignMotion.slideUp)
                 .zIndex(2)
             }
 
             if let overlay = activeOverlay {
                 captureFlowOverlay(for: overlay)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showManualUPCEntry {
-                manualUPCEntryBar
-            } else if session.currentImage != nil && session.imageNamingMode == .manualInput {
-                manualNameEntryBar
-            }
-        }
-        // Keyboard accessory only for manual image-name mode — UPC entry bar already has its own controls.
-        // Duplicating both caused the floating "Any Name / Done" overlay and TUIKeyplane constraint errors.
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                if !showManualUPCEntry {
-                    Spacer()
-                    Button("Done") {
-                        manualUPCFocused = false
-                        manualNameFocused = false
-                    }
-                    .fontWeight(.semibold)
-                }
             }
         }
         .fullScreenCover(isPresented: $showNativeCamera) {
@@ -224,16 +214,14 @@ struct CaptureFlowView: View {
                 onCancel: {
                     showNativeCamera = false
                     instruction = batchContinuousPaused
-                        ? "Batch capture paused. Tap Capture Product Photo when ready."
-                        : "Capture cancelled. Tap Capture Product Photo when ready."
+                        ? "Batch capture paused. Tap Capture when ready."
+                        : "Capture cancelled. Tap Capture when ready."
                 }
             )
             .ignoresSafeArea()
         }
         .onChange(of: showNativeCamera) { _, isOpen in
-            if !isOpen {
-                runPendingAfterCameraAction()
-            }
+            if !isOpen { runPendingAfterCameraAction() }
         }
         .sheet(item: $sharePayload) { payload in ActivityView(activityItems: payload.items, onComplete: nil) }
         .sheet(isPresented: Binding(
@@ -262,13 +250,7 @@ struct CaptureFlowView: View {
         .onAppear {
             guard !didInitializeCaptureFlow else { return }
             didInitializeCaptureFlow = true
-            session.beginCaptureFlow(mode: activeMode)
-            manualNameInput = ""
-            batchContinuousPaused = false
-            if activeMode == .batch {
-                prepareBatchSession(promptIfNeeded: true)
-            }
-            resetCaptureStatusText()
+            initializeCaptureEntry()
         }
         .onDisappear {
             pendingAutoOpenCamera = false
@@ -280,25 +262,288 @@ struct CaptureFlowView: View {
             pendingCameraWorkItem = nil
         }
         .onChange(of: previewIndex) { _, newValue in
-            if newValue == nil {
-                finishPreviewAndResumeCapture()
+            if newValue == nil { finishPreviewAndResumeCapture() }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    manualUPCFocused = false
+                    manualNameFocused = false
+                }
+                .fontWeight(.semibold)
             }
         }
     }
 
-    private func finishPreviewAndResumeCapture() {
+    // MARK: - Guided content
+
+    @ViewBuilder
+    private var guidedCaptureContent: some View {
+        VStack(alignment: .leading, spacing: PSDesignSpacing.sm) {
+            if activeMode == .batch {
+                CaptureBatchProgressBanner(
+                    productNumber: session.nextSequence,
+                    capturedThisSession: batchCapturedThisSession
+                )
+            }
+
+            if session.multiAngleEnabled {
+                CaptureAngleProgressSection(
+                    angles: session.activeAngles,
+                    currentIndex: session.currentAngleIndex,
+                    completedAngles: completedAngleSet
+                )
+                .transition(PSDesignMotion.slideDown)
+            }
+
+            postCaptureBlock
+
+            if canSwitchCaptureMode, workflowKind == .standardCapture {
+                CaptureModeSwitchSection(activeMode: activeMode, onSelect: selectCaptureMode)
+            }
+
+            if stepContext.isReadyToQueue && session.imageNamingMode == .scannedUPC && !showScanner && !showManualUPCEntry {
+                PrimaryButton("Add to Queue", systemImage: PSDesignIcons.queue, isDisabled: queueInFlight, isLoading: queueInFlight) {
+                    submitNameFromBar()
+                }
+                .transition(PSDesignMotion.scaleFade)
+            }
+
+            SecondaryButton("Review Queue", systemImage: PSDesignIcons.queue) {
+                session.navigationPath.append(AppRoute.queue)
+            }
+            .accessibilityHint("Review captured products before export")
+        }
+    }
+
+    @ViewBuilder
+    private var postCaptureBlock: some View {
+        let compactTransition = shouldShowIdentification
+            && (session.currentImage != nil || session.isAwaitingMultiAngleName)
+
+        VStack(alignment: .leading, spacing: compactTransition ? PSDesignSpacing.sm : PSDesignSpacing.lg) {
+            if !session.isAwaitingMultiAngleName || session.currentImage != nil {
+                CaptureCameraSection(
+                    headline: captureHeadline,
+                    detail: captureDetail,
+                    previewImage: session.currentImage,
+                    captureButtonTitle: captureButtonTitle,
+                    isMultiAngle: session.multiAngleEnabled,
+                    currentAngleLabel: session.currentAngleLabel,
+                    onCapture: retakeOrCapturePhoto
+                )
+            }
+
+            if !session.pendingMultiAngleCaptures.isEmpty {
+                CaptureBufferedImagesStrip(
+                    captures: session.pendingMultiAngleCaptures,
+                    totalCount: session.activeAngles.count
+                )
+                .transition(PSDesignMotion.slideUp)
+            }
+
+            if shouldShowIdentification {
+                CaptureProductIdentificationSection(
+                    session: session,
+                    showsScanner: showScanner || (session.isAwaitingMultiAngleName && session.imageNamingMode == .scannedUPC && !showManualUPCEntry),
+                    showManualEntry: showManualUPCEntry,
+                    captureUsesCustomName: captureUsesCustomName,
+                    nameEntryHint: nameEntryHint,
+                    recentBarcodes: session.recentBarcodes,
+                    lastUsedUPC: session.lastUsedUPC,
+                    onScanResult: handleName,
+                    onOpenScanner: openScannerFromManualEntry,
+                    onManualUPC: { activateManualUPCEntry(useCustomName: false) },
+                    onManualName: { activateManualUPCEntry(useCustomName: true) },
+                    onUseLastUPC: {
+                        manualUPCFocused = false
+                        session.currentUPC = session.lastUsedUPC
+                        handleName(session.lastUsedUPC)
+                    },
+                    onRecentBarcode: { code in
+                        manualUPCFocused = false
+                        session.currentUPC = code
+                        handleName(code)
+                    },
+                    manualUPCText: $session.currentUPC,
+                    manualNameText: $manualNameInput,
+                    manualUPCFocused: $manualUPCFocused,
+                    manualNameFocused: $manualNameFocused,
+                    onSubmit: {
+                        if session.imageNamingMode == .manualInput && !showManualUPCEntry && !session.isAwaitingMultiAngleName {
+                            submitManualName()
+                        } else {
+                            submitNameFromBar()
+                        }
+                    },
+                    onToggleNameMode: toggleCaptureNameMode,
+                    queueInFlight: queueInFlight,
+                    scannerEpoch: scannerEpoch
+                )
+                .id(CaptureScrollID.identifyProduct)
+                .transition(PSDesignMotion.slideUp)
+            }
+        }
+    }
+
+    private func retakeOrCapturePhoto() {
+        if session.currentImage != nil {
+            session.currentUPC = ""
+            if session.imageNamingMode == .manualInput { manualNameInput = "" }
+            showScanner = false
+            showManualUPCEntry = false
+        }
+        openCamera()
+    }
+
+    // MARK: - Back navigation
+
+    private func handleBack() {
+        switch stepContext.currentStep {
+        case .chooseWorkflow:
+            requestBatchExit { session.popNavigation() }
+        case .capturePhotos:
+            goBackToWorkflowSelection()
+        case .identifyProduct:
+            goBackToCaptureFromIdentification()
+        case .addToQueue:
+            goBackToIdentifyFromQueue()
+        }
+    }
+
+    private func goBackToWorkflowSelection() {
+        if skippedWorkflowSelection {
+            requestBatchExit { session.popNavigation() }
+            return
+        }
+
+        withAnimation(PSDesignMotion.springSoft) {
+            hasConfirmedWorkflow = false
+            resetIdentificationState()
+            session.startNextProduct()
+
+            if enteredViaMultiAngleShortcut {
+                showMultiAngleHomeSetup = true
+                selectedCaptureMode = nil
+                session.multiAngleEnabled = true
+                session.enabledAngles = ProductAngle.captureAngles
+            } else {
+                showMultiAngleHomeSetup = false
+                selectedCaptureMode = nil
+                session.multiAngleEnabled = false
+            }
+        }
+    }
+
+    private func goBackToCaptureFromIdentification() {
+        withAnimation(PSDesignMotion.springSoft) {
+            resetIdentificationState()
+            if session.isAwaitingMultiAngleName {
+                session.restoreLastMultiAngleShotForRetake()
+            } else {
+                session.currentImage = nil
+            }
+        }
+    }
+
+    private func goBackToIdentifyFromQueue() {
+        withAnimation(PSDesignMotion.springSoft) {
+            session.currentUPC = ""
+            manualNameInput = ""
+            nameEntryHint = nil
+            showManualUPCEntry = false
+            captureUsesCustomName = false
+            manualUPCFocused = false
+            manualNameFocused = false
+        }
+    }
+
+    private func resetIdentificationState() {
         showScanner = false
         showManualUPCEntry = false
         captureUsesCustomName = false
         nameEntryHint = nil
+        session.currentUPC = ""
+        manualNameInput = ""
         manualUPCFocused = false
         manualNameFocused = false
-        qualityReport = nil
-        activeOverlay = nil
-        showBatchCameraAlert = false
-        resetCaptureStatusText()
-        instruction = startInstruction
+        pendingScannerWorkItem?.cancel()
+        pendingScannerWorkItem = nil
     }
+
+    // MARK: - Initialization
+
+    private func initializeCaptureEntry() {
+        manualNameInput = ""
+        batchContinuousPaused = false
+
+        if mode == .batch {
+            workflowKind = .standardCapture
+            selectedCaptureMode = .batch
+            activeMode = .batch
+            skippedWorkflowSelection = true
+            session.multiAngleEnabled = false
+            confirmWorkflowSelection(skipBatchPrompt: false)
+            return
+        }
+
+        if session.consumeMultiAngleHomeShortcut() {
+            workflowKind = .multiAngle
+            enteredViaMultiAngleShortcut = true
+            selectedCaptureMode = nil
+            activeMode = .single
+            showMultiAngleHomeSetup = true
+            session.multiAngleEnabled = true
+            session.enabledAngles = ProductAngle.captureAngles
+            return
+        }
+
+        selectedCaptureMode = nil
+        session.multiAngleEnabled = false
+        resetCaptureStatusText()
+    }
+
+    private func confirmWorkflowSelection(skipBatchPrompt: Bool = false) {
+        guard let workflowKind, let mode = selectedCaptureMode else { return }
+        InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+        activeMode = mode
+
+        switch workflowKind {
+        case .standardCapture:
+            session.multiAngleEnabled = false
+        case .multiAngle:
+            session.multiAngleEnabled = true
+            session.enabledAngles = ProductAngle.captureAngles
+        }
+
+        session.captureMode = activeMode
+        session.beginCaptureFlow(mode: activeMode)
+        hasConfirmedWorkflow = true
+        instruction = startInstruction
+
+        if activeMode == .batch {
+            prepareBatchSession(promptIfNeeded: !skipBatchPrompt)
+        }
+    }
+
+    private func confirmMultiAngleHomeSetup() {
+        guard let mode = selectedCaptureMode else { return }
+        InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+        activeMode = mode
+        showMultiAngleHomeSetup = false
+        session.multiAngleEnabled = true
+        session.enabledAngles = ProductAngle.captureAngles
+        session.captureMode = activeMode
+        session.beginCaptureFlow(mode: activeMode)
+        hasConfirmedWorkflow = true
+        instruction = startInstruction
+        if activeMode == .batch {
+            prepareBatchSession(promptIfNeeded: true)
+        }
+    }
+
+    // MARK: - Camera & capture (preserved logic)
 
     private var activeCameraSettings: CameraSessionSettings {
         activeMode == .batch ? session.batchCameraSettings : session.preferredCameraSettings
@@ -325,7 +570,6 @@ struct CaptureFlowView: View {
         pendingScannerWorkItem = nil
         guard !pendingOpenCamera else { return }
         if showScanner {
-            // Release AVCaptureSession before UIImagePicker takes the camera.
             showScanner = false
             pendingOpenCamera = true
             pendingCameraWorkItem?.cancel()
@@ -355,12 +599,10 @@ struct CaptureFlowView: View {
         showManualUPCEntry = false
         manualUPCFocused = false
         let work = DispatchWorkItem {
-            guard session.currentImage != nil, !showNativeCamera else { return }
+            guard session.currentImage != nil || session.isAwaitingMultiAngleName, !showNativeCamera else { return }
             scannerEpoch += 1
             showScanner = true
-            if let message {
-                instruction = message
-            }
+            if let message { instruction = message }
         }
         pendingScannerWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
@@ -369,41 +611,22 @@ struct CaptureFlowView: View {
     private func handleCameraCapture(_ image: UIImage) {
         let capped = ImageProcessor.downsampleIfNeededForImportPipeline(
             image,
-            maxLongEdgePixels: CaptureQualityLimits.cameraOriginalMaxLongEdge
+            maxLongEdgePixels: ImageProcessingLimits.cameraOriginalMaxLongEdge
         )
         session.currentImage = capped
         pendingAfterCameraWorkItem?.cancel()
-
-        Task.detached(priority: .userInitiated) {
-            let report = ImageQualityAnalyzer.analyze(capped)
-            await MainActor.run {
-                guard session.currentImage != nil else { return }
-                qualityReport = report
-                pendingAfterCameraWorkItem?.cancel()
-                let work = DispatchWorkItem {
-                    guard !showNativeCamera, activeOverlay == nil else { return }
-                    if report.shouldWarn {
-                        instruction = "Capture quality warning. Retake recommended or use anyway."
-                        dismissCaptureKeyboard()
-                        activeOverlay = .qualityWarning
-                    } else {
-                        handlePhotoCaptured()
-                    }
-                }
-                pendingAfterCameraWorkItem = work
-                if !showNativeCamera {
-                    work.perform()
-                }
-            }
+        let work = DispatchWorkItem {
+            guard !showNativeCamera, activeOverlay == nil else { return }
+            handlePhotoCaptured()
         }
+        pendingAfterCameraWorkItem = work
+        if !showNativeCamera { work.perform() }
     }
 
     private func runPendingAfterCameraAction() {
         guard let work = pendingAfterCameraWorkItem, !work.isCancelled else { return }
         pendingAfterCameraWorkItem = nil
-        if !showNativeCamera {
-            work.perform()
-        }
+        if !showNativeCamera { work.perform() }
     }
 
     private func scheduleAutoOpenCamera(after delay: TimeInterval) {
@@ -413,37 +636,23 @@ struct CaptureFlowView: View {
             guard pendingAutoOpenCamera, activeMode == .batch, session.batchAutoOpenCamera, !batchContinuousPaused else { return }
             guard canPresentBlockingUI else {
                 autoOpenRetryCount += 1
-                // Cap retries so a stuck overlay can never loop forever.
                 if autoOpenRetryCount < 12 {
                     scheduleAutoOpenCamera(after: 0.45)
                 } else {
                     pendingAutoOpenCamera = false
                     autoOpenRetryCount = 0
-                    instruction = "Tap Capture Product Photo when ready."
+                    instruction = "Tap Capture when ready."
                 }
                 return
             }
             pendingAutoOpenCamera = false
             autoOpenRetryCount = 0
-            qualityReport = nil
             openCamera()
         }
     }
 
     private var shouldOfferContinuousCapture: Bool {
         activeMode == .batch && session.batchAutoOpenCamera && !batchContinuousPaused
-    }
-
-    private func pauseBatchContinuousCapture() {
-        batchContinuousPaused = true
-        pendingAutoOpenCamera = false
-        showNativeCamera = false
-        instruction = "Batch capture paused. Tap Capture Product Photo when ready, or go back for a session summary."
-    }
-
-    private func recordBatchQualityWarning() {
-        guard activeMode == .batch else { return }
-        batchQualityWarnings += 1
     }
 
     private func requestBatchExit(then action: @escaping () -> Void) {
@@ -456,8 +665,7 @@ struct CaptureFlowView: View {
             action()
             return
         }
-        let warningLabel = batchQualityWarnings == 1 ? "quality warning" : "quality warnings"
-        batchSummaryMessage = "\(captured) products captured · \(batchQualityWarnings) \(warningLabel)"
+        batchSummaryMessage = "\(captured) products captured"
         pendingExitAction = action
         withAnimation { showBatchSummaryToast = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -467,34 +675,42 @@ struct CaptureFlowView: View {
         }
     }
 
-    private var queueHeaderButton: some View {
-        Button {
-            session.navigationPath.append(AppRoute.queue)
-        } label: {
-            Text("Queue (\(session.products.count))")
-                .font(DS.TypeScale.caption.weight(.semibold))
-                .foregroundStyle(DS.ColorToken.accent)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 8)
-                .background(DS.ColorToken.backgroundTertiary, in: Capsule())
-                .overlay(Capsule().stroke(DS.ColorToken.separator, lineWidth: 1))
-        }
-        .buttonStyle(.plainPressable)
-    }
-
     private var lastAddedText: String {
         session.products.last?.filename ?? "image queued"
     }
 
     private func resetCaptureStatusText() {
         activeOverlay = nil
-        qualityReport = nil
         if !showScanner { instruction = startInstruction }
     }
 
-    private func dismissCaptureKeyboard() {
+    private func finishPreviewAndResumeCapture() {
+        showScanner = false
+        showManualUPCEntry = false
+        captureUsesCustomName = false
+        nameEntryHint = nil
         manualUPCFocused = false
         manualNameFocused = false
+        activeOverlay = nil
+        showBatchCameraAlert = false
+        resetCaptureStatusText()
+        instruction = startInstruction
+    }
+
+    private var startInstruction: String {
+        if session.multiAngleEnabled {
+            if session.isAwaitingMultiAngleName {
+                return "All angles captured. Identify the product to name UPC-1, UPC-2, …"
+            }
+            if shouldOfferContinuousCapture {
+                return "Capture every angle, then identify the product."
+            }
+            return "Capture each angle in order."
+        }
+        if shouldOfferContinuousCapture {
+            return "Camera opens automatically after each product."
+        }
+        return "Tap Capture to open the camera."
     }
 
     @ViewBuilder
@@ -503,7 +719,7 @@ struct CaptureFlowView: View {
         case .duplicate:
             CaptureFlowPromptOverlay(
                 icon: "doc.on.doc.fill",
-                iconColor: DS.ColorToken.warning,
+                iconColor: PSDesignColors.warning,
                 title: "Duplicate image already in queue",
                 message: "This filename and angle are already in the queue. Replace the existing entry, or add a copy (the new file will be suffixed with -copy2).",
                 primaryTitle: "Replace Existing",
@@ -525,549 +741,42 @@ struct CaptureFlowView: View {
                     presentScannerSoon(after: 0.35)
                 }
             )
-        case .qualityWarning:
-            CaptureFlowPromptOverlay(
-                icon: "exclamationmark.triangle.fill",
-                iconColor: DS.ColorToken.warning,
-                title: "Retake Recommended",
-                message: qualityReport?.summary ?? "This photo may not polish well.",
-                primaryTitle: "Retake",
-                primaryRole: .destructive,
-                secondaryTitle: "Use Anyway",
-                cancelTitle: "Cancel",
-                onPrimary: {
-                    activeOverlay = nil
-                    qualityReport = nil
-                    instruction = startInstruction
-                    openCamera()
-                },
-                onSecondary: {
-                    activeOverlay = nil
-                    recordBatchQualityWarning()
-                    handlePhotoCaptured()
-                },
-                onCancel: {
-                    activeOverlay = nil
-                    resetCaptureStatusText()
-                }
-            )
-        }
-    }
-
-    private var startInstruction: String {
-        if session.multiAngleEnabled {
-            if session.isAwaitingMultiAngleName {
-                return "All angles captured. Scan or enter one UPC to name them as UPC-1, UPC-2, …"
-            }
-            if shouldOfferContinuousCapture {
-                return "Camera opens for each angle. Capture every angle first, then scan one UPC for the set."
-            }
-            return "Take each angle photo first. After the last angle, scan one UPC to name the set."
-        }
-        if shouldOfferContinuousCapture {
-            return "Camera opens automatically after each product. Use the system camera controls for flash and zoom."
-        }
-        return "Tap Capture Product Photo to open the system camera."
-    }
-
-    private var multiAngleCaptureControls: some View {
-        DSCard {
-            VStack(alignment: .leading, spacing: DS.Space.stack) {
-                Toggle("Multi-angle set", isOn: Binding(
-                    get: { session.multiAngleEnabled },
-                    set: { enabled in
-                        session.multiAngleEnabled = enabled
-                        instruction = enabled
-                            ? session.multiAngleStatusLine
-                            : startInstruction
-                        if enabled {
-                            session.startNextProduct()
-                        }
-                    }
-                ))
-                .tint(DS.ColorToken.accent)
-                if session.multiAngleEnabled {
-                    Text(session.multiAngleStatusLine)
-                        .font(DS.TypeScale.caption)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Capture all angles, then one UPC names files as UPC-1, UPC-2, …")
-                        .font(DS.TypeScale.micro)
-                        .foregroundStyle(DS.ColorToken.tertiaryLabel)
-                }
-            }
-        }
-    }
-
-    private var pendingMultiAngleStrip: some View {
-        Group {
-            if !session.pendingMultiAngleCaptures.isEmpty {
-                DSCard {
-                    VStack(alignment: .leading, spacing: DS.Space.stack) {
-                        Text("Buffered angles (\(session.pendingMultiAngleCaptures.count)/\(session.activeAngles.count))")
-                            .font(DS.TypeScale.caption.weight(.semibold))
-                            .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: DS.Space.stack) {
-                                ForEach(session.pendingMultiAngleCaptures.sorted(by: { $0.ordinal < $1.ordinal })) { shot in
-                                    VStack(spacing: 4) {
-                                        Image(uiImage: shot.image)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(width: 52, height: 52)
-                                            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
-                                        Text("\(shot.ordinal)·\(shot.angle.badgeTitle)")
-                                            .font(DS.TypeScale.micro)
-                                            .foregroundStyle(DS.ColorToken.secondaryLabel)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var captureModeToggle: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                DSSegmentedChip(title: "Single", isSelected: activeMode == .single) {
-                    selectCaptureMode(.single)
-                }
-                DSSegmentedChip(title: "Batch", isSelected: activeMode == .batch) {
-                    selectCaptureMode(.batch)
-                }
-            }
-            .disabled(!canSwitchCaptureMode)
-            .opacity(canSwitchCaptureMode ? 1 : 0.45)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Capture mode")
-
-            if !canSwitchCaptureMode {
-                Text("Finish or clear the current product to switch modes.")
-                    .font(DS.TypeScale.micro)
-                    .foregroundStyle(DS.ColorToken.tertiaryLabel)
-            }
         }
     }
 
     private func selectCaptureMode(_ newMode: CaptureMode) {
         guard canSwitchCaptureMode, activeMode != newMode else { return }
         InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-
         if activeMode == .batch, newMode == .single {
             pendingAutoOpenCamera = false
             batchContinuousPaused = true
         }
-
         activeMode = newMode
         session.captureMode = newMode
-
         if newMode == .batch {
             prepareBatchSession(promptIfNeeded: true)
             instruction = session.batchAutoOpenCamera
-                ? "Batch mode on. Tap Capture Product Photo, or wait for auto-open."
-                : "Batch mode on. Tap Capture Product Photo for each product."
+                ? "Batch mode on. Tap Capture, or wait for auto-open."
+                : "Batch mode on. Tap Capture for each product."
         } else {
             showBatchCameraAlert = false
-            instruction = "Single mode. Tap Capture Product Photo to begin."
+            instruction = "Single mode. Tap Capture to begin."
         }
         resetCaptureStatusText()
     }
 
     private func prepareBatchSession(promptIfNeeded: Bool) {
         batchSessionStartCount = session.products.count
-        batchQualityWarnings = 0
         batchContinuousPaused = false
         session.resetBatchCameraSession()
         guard promptIfNeeded else { return }
         if session.hasBatchAutoOpenPreference {
-            if session.batchAutoOpenCamera {
-                scheduleAutoOpenCamera(after: 0.5)
-            }
+            if session.batchAutoOpenCamera { scheduleAutoOpenCamera(after: 0.5) }
         } else {
             showBatchCameraAlert = true
         }
     }
 
-    private var captureWizardProgress: some View {
-        let active = currentWizardStep
-        let steps = CaptureWizardStep.allCases
-        return VStack(spacing: 8) {
-            HStack(spacing: 0) {
-                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                    let isActive = step == active
-                    let isPast = step.rawValue < active.rawValue
-                    Circle()
-                        .fill(isActive || isPast ? DS.ColorToken.accent : DS.ColorToken.backgroundTertiary)
-                        .frame(width: isActive ? 12 : 9, height: isActive ? 12 : 9)
-                        .overlay(
-                            Circle()
-                                .stroke(DS.ColorToken.accent.opacity(isActive ? 0.35 : 0), lineWidth: 3)
-                                .frame(width: 18, height: 18)
-                        )
-                        .accessibilityLabel("\(step.title)\(isActive ? ", current step" : "")")
-
-                    if index < steps.count - 1 {
-                        Rectangle()
-                            .fill(isPast ? DS.ColorToken.accent.opacity(0.55) : DS.ColorToken.separator)
-                            .frame(height: 2)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            .padding(.horizontal, 18)
-
-            HStack {
-                ForEach(steps) { step in
-                    Text(step.title)
-                        .font(.system(size: 11, weight: step == active ? .semibold : .medium))
-                        .foregroundStyle(step == active ? DS.ColorToken.label : DS.ColorToken.secondaryLabel)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Capture steps: Scan, Shoot, Review, Confirm. Current: \(active.title)")
-    }
-
-    private var instructionBar: some View {
-        DSCard {
-            Text(instruction)
-                .font(DS.TypeScale.caption)
-                .foregroundStyle(DS.ColorToken.label)
-                .tracking(0.1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .multilineTextAlignment(.leading)
-        }
-    }
-
-    private var angleProgressBar: some View {
-        Group {
-            if session.multiAngleEnabled {
-                HStack(spacing: DS.Space.stack - 2) {
-                    ForEach(Array(session.activeAngles.enumerated()), id: \.element.id) { idx, angle in
-                        DSCaptureModeChip(
-                            title: angle.rawValue,
-                            isSelected: idx == session.currentAngleIndex
-                        )
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private var captureReadyPanel: some View {
-        VStack(spacing: DS.Space.section) {
-            DSCard(padding: DS.Space.section + 4) {
-                VStack(spacing: DS.Space.section) {
-                    IconBadge(
-                        systemName: session.multiAngleEnabled ? "camera.metering.matrix" : "camera.viewfinder",
-                        dimension: 58,
-                        iconFontSize: 24
-                    )
-                    Text(session.currentImage == nil
-                         ? (session.multiAngleEnabled ? "Capture \(session.currentAngleLabel)" : "Capture product photo")
-                         : "Photo ready")
-                        .font(DS.TypeScale.sectionTitle)
-                        .foregroundStyle(DS.ColorToken.label)
-                    Text(session.currentImage == nil
-                         ? capturePanelText
-                         : "Retake if needed, or continue to name this product.")
-                        .font(DS.TypeScale.caption)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 168)
-            }
-
-            if let image = session.currentImage { capturedPreview(image) }
-            if let report = qualityReport { qualityAssistantCard(report) }
-
-            if showsStudioGuidelines {
-                DSStudioGuidelinesPanel()
-            }
-
-            DSPrimaryActionStack {
-                Button(session.currentImage == nil ? "Capture Product Photo" : "Retake / Replace Current Photo") {
-                    if session.imageNamingMode == .manualInput { manualNameInput = "" }
-                    qualityReport = nil
-                    session.currentUPC = ""
-                    showScanner = false
-                    showManualUPCEntry = false
-                    manualUPCFocused = false
-                    openCamera()
-                }
-                .buttonStyle(PrimaryButtonStyle())
-
-                Button {
-                    session.navigationPath.append(AppRoute.queue)
-                } label: {
-                    Label("View Queue & Share", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-
-                if session.currentImage != nil && session.imageNamingMode == .scannedUPC {
-                    Button("Open UPC Scanner") {
-                        showManualUPCEntry = false
-                        manualUPCFocused = false
-                        presentScannerSoon(after: 0.15)
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                }
-            }
-        }
-    }
-
-    private var capturePanelText: String {
-        switch session.imageNamingMode {
-        case .scannedUPC:
-            if session.multiAngleEnabled {
-                return "Capture every angle first. After the last shot, scan one UPC to save UPC-1, UPC-2, …"
-            }
-            return "After capture, scan or type any UPC, SKU, or custom name."
-        case .randomName:
-            if session.multiAngleEnabled {
-                return "Capture every angle first. Then one random name is applied as name-1, name-2, …"
-            }
-            return "After capture, the app saves this image using a random native-style IMG name."
-        case .manualInput:
-            if session.multiAngleEnabled {
-                return "Capture every angle first. Then enter one name applied as name-1, name-2, …"
-            }
-            return "After capture, enter the image name manually. The app will add .jpg automatically."
-        }
-    }
-
-    private func capturedPreview(_ image: UIImage) -> some View {
-        DSCard {
-            HStack(spacing: DS.Space.section) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 64, height: 64)
-                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.chip, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: DS.Radius.chip).stroke(DS.ColorToken.separator.opacity(0.85), lineWidth: 1))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Photo captured")
-                        .font(DS.TypeScale.rowTitle)
-                        .foregroundStyle(DS.ColorToken.label)
-                    Text("Angle: \(session.currentAngleLabel) · Retake if you need sharper light or framing.")
-                        .font(DS.TypeScale.caption)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-        }
-    }
-
-    private func qualityAssistantCard(_ report: CaptureQualityReport) -> some View {
-        DSCard {
-            VStack(alignment: .leading, spacing: DS.Space.stack) {
-                HStack {
-                    Label(report.title, systemImage: report.shouldWarn ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
-                        .font(DS.TypeScale.sectionTitle)
-                        .foregroundStyle(report.shouldWarn ? DS.ColorToken.warning : DS.ColorToken.success)
-                        .labelStyle(.titleAndIcon)
-                    Spacer()
-                    Text("\(Int(report.overallScore * 100))%")
-                        .font(DS.TypeScale.micro)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        .monospacedDigit()
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(DS.ColorToken.backgroundTertiary, in: Capsule())
-                }
-                Text(report.summary)
-                    .font(DS.TypeScale.caption)
-                    .foregroundStyle(DS.ColorToken.secondaryLabel)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: DS.Space.tight) {
-                    DSStatusPill(icon: "sun.max", text: "Light \(Int(report.brightnessScore * 100))")
-                    DSStatusPill(icon: "camera.aperture", text: "Sharp \(Int(report.blurScore * 100))")
-                    DSStatusPill(icon: "viewfinder", text: "Frame \(Int(report.framingScore * 100))")
-                }
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                .stroke(report.shouldWarn ? DS.ColorToken.warning.opacity(0.45) : DS.ColorToken.separator, lineWidth: 1)
-        )
-    }
-
-    private var quickQueueButton: some View {
-        Button {
-            session.navigationPath.append(AppRoute.queue)
-        } label: {
-            Label("View Queue & Share", systemImage: "square.and.arrow.up")
-        }
-        .buttonStyle(SecondaryButtonStyle())
-    }
-
-    private var manualUPCPanel: some View {
-        DSCard {
-            VStack(spacing: DS.Space.stack) {
-                Text("Scan the barcode above, or enter a label manually.")
-                    .font(DS.TypeScale.caption)
-                    .foregroundStyle(DS.ColorToken.secondaryLabel)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button {
-                    activateManualUPCEntry(useCustomName: false)
-                } label: {
-                    Label("Enter UPC manually", systemImage: "123.rectangle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-
-                Button {
-                    activateManualUPCEntry(useCustomName: true)
-                } label: {
-                    Label("Use any name", systemImage: "character.cursor.ibeam")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-
-                if !session.lastUsedUPC.isEmpty {
-                    Button {
-                        manualUPCFocused = false
-                        session.currentUPC = session.lastUsedUPC
-                        handleName(session.lastUsedUPC)
-                    } label: {
-                        Text("Use last UPC: \(session.lastUsedUPC)")
-                            .font(DS.TypeScale.caption)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                }
-                if !session.recentBarcodes.isEmpty {
-                    VStack(alignment: .leading, spacing: DS.Space.tight) {
-                        Text("Recent scans")
-                            .font(DS.TypeScale.micro)
-                            .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: DS.Space.stack - 2) {
-                                ForEach(session.recentBarcodes.prefix(12), id: \.self) { code in
-                                    Button {
-                                        manualUPCFocused = false
-                                        session.currentUPC = code
-                                        handleName(code)
-                                    } label: {
-                                        Text(code)
-                                            .font(DS.TypeScale.micro)
-                                            .monospacedDigit()
-                                            .foregroundStyle(DS.ColorToken.label)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 7)
-                                            .background(DS.ColorToken.backgroundTertiary, in: Capsule())
-                                            .overlay(Capsule().stroke(DS.ColorToken.separator, lineWidth: 1))
-                                    }
-                                    .buttonStyle(.plainPressable)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var namingAfterCapturePanel: some View {
-        VStack(spacing: DS.Space.section) {
-            if let image = session.currentImage {
-                capturedPreview(image)
-            }
-            DSCard {
-                VStack(alignment: .leading, spacing: DS.Space.stack) {
-                    Text(captureUsesCustomName ? "Enter a product name" : "Enter UPC or SKU")
-                        .font(DS.TypeScale.sectionTitle)
-                        .foregroundStyle(DS.ColorToken.label)
-                    Text("Use the field below, or open the scanner to read the barcode with the camera.")
-                        .font(DS.TypeScale.caption)
-                        .foregroundStyle(DS.ColorToken.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Button {
-                openScannerFromManualEntry()
-            } label: {
-                Label("Scan barcode with camera", systemImage: "barcode.viewfinder")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-        }
-    }
-
-    private var manualUPCEntryBar: some View {
-        VStack(spacing: DS.Space.stack) {
-            Divider()
-            HStack {
-                Button {
-                    toggleCaptureNameMode()
-                } label: {
-                    Label(
-                        captureUsesCustomName ? "Enter UPC" : "Use any name",
-                        systemImage: captureUsesCustomName ? "123.rectangle" : "character.cursor.ibeam"
-                    )
-                    .font(DS.TypeScale.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderless)
-                Spacer()
-                Button("Scan barcode") {
-                    openScannerFromManualEntry()
-                }
-                .font(DS.TypeScale.caption.weight(.semibold))
-            }
-            if let nameEntryHint {
-                Text(nameEntryHint)
-                    .font(DS.TypeScale.micro)
-                    .foregroundStyle(DS.ColorToken.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: DS.Space.stack) {
-                TextField(
-                    captureUsesCustomName ? "Product name" : "UPC or SKU",
-                    text: $session.currentUPC
-                )
-                .keyboardType(captureUsesCustomName ? .default : .numberPad)
-                .textInputAutocapitalization(captureUsesCustomName ? .words : .never)
-                .autocorrectionDisabled(!captureUsesCustomName)
-                .textFieldStyle(.roundedBorder)
-                .dsSemanticTextField()
-                .focused($manualUPCFocused)
-                .submitLabel(.done)
-                .onSubmit { submitNameFromBar() }
-                // Force TextField rebuild so iOS actually swaps numberPad ↔ default keyboard.
-                .id(captureUsesCustomName ? "nameField" : "upcField")
-                Button("Done") {
-                    manualUPCFocused = false
-                }
-                .font(DS.TypeScale.bodyEmphasis)
-                .foregroundStyle(DS.ColorToken.accent)
-            }
-            Button("Add to Queue") {
-                submitNameFromBar()
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(queueInFlight)
-            .opacity(queueInFlight ? 0.45 : 1)
-        }
-        .padding(.horizontal, DS.Space.screenHorizontal)
-        .padding(.top, DS.Space.stack)
-        .padding(.bottom, DS.Space.section)
-        .background(DS.ColorToken.background)
-    }
-
-    /// Resign focus first, then re-focus so the keyboard type actually changes.
     private func toggleCaptureNameMode() {
         let switchingToCustom = !captureUsesCustomName
         InteractionHaptics.selection(vibrate: session.vibrateEnabled)
@@ -1075,9 +784,7 @@ struct CaptureFlowView: View {
         manualUPCFocused = false
         DispatchQueue.main.async {
             captureUsesCustomName = switchingToCustom
-            if switchingToCustom {
-                // Keep typed digits when switching to name mode; clear only if empty.
-            } else {
+            if !switchingToCustom {
                 session.currentUPC = session.currentUPC.filter(\.isNumber)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
@@ -1090,51 +797,11 @@ struct CaptureFlowView: View {
         pendingCameraWorkItem?.cancel()
         pendingCameraWorkItem = nil
         pendingOpenCamera = false
-        if showNativeCamera {
-            showNativeCamera = false
-        }
+        if showNativeCamera { showNativeCamera = false }
         manualUPCFocused = false
         nameEntryHint = nil
         showManualUPCEntry = false
-        presentScannerSoon(
-            after: 0.45,
-            message: "Point the camera at the barcode to scan."
-        )
-    }
-
-    private var manualNamePanel: some View {
-        DSCard {
-            Text("Enter image name for \(session.currentAngleLabel). Do not type .jpg — it is added automatically. Use the field below.")
-                .font(DS.TypeScale.caption)
-                .foregroundStyle(DS.ColorToken.secondaryLabel)
-        }
-    }
-
-    private var manualNameEntryBar: some View {
-        VStack(spacing: DS.Space.stack) {
-            Divider()
-            HStack(spacing: DS.Space.stack) {
-                TextField("Image name", text: $manualNameInput)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
-                    .dsSemanticTextField()
-                    .focused($manualNameFocused)
-                    .submitLabel(.done)
-                    .onSubmit { submitManualName() }
-                Button("Done") {
-                    manualNameFocused = false
-                }
-                .font(DS.TypeScale.bodyEmphasis)
-                .foregroundStyle(DS.ColorToken.accent)
-            }
-            Button("Use This Name") { submitManualName() }
-                .buttonStyle(PrimaryButtonStyle())
-        }
-        .padding(.horizontal, DS.Space.screenHorizontal)
-        .padding(.top, DS.Space.stack)
-        .padding(.bottom, DS.Space.section)
-        .background(DS.ColorToken.background)
+        presentScannerSoon(after: 0.45, message: "Point the camera at the barcode to scan.")
     }
 
     private func activateManualUPCEntry(useCustomName: Bool) {
@@ -1156,7 +823,7 @@ struct CaptureFlowView: View {
 
     private func submitNameFromBar() {
         manualUPCFocused = false
-        guard session.currentImage != nil else {
+        guard session.currentImage != nil || session.isAwaitingMultiAngleName else {
             nameEntryHint = "Capture the product photo first."
             return
         }
@@ -1174,25 +841,61 @@ struct CaptureFlowView: View {
 
     private func submitManualName() {
         manualNameFocused = false
+        guard session.currentImage != nil || session.isAwaitingMultiAngleName else {
+            nameEntryHint = "Capture the product photo first."
+            return
+        }
         handleName(manualNameInput)
     }
 
+    private func scheduleAutoScrollAfterCapture() {
+        captureAutoScrollGeneration += 1
+        let generation = captureAutoScrollGeneration
+
+        Task { @MainActor in
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 80_000_000)
+
+            for _ in 0..<8 {
+                guard generation == captureAutoScrollGeneration,
+                      generation != consumedAutoScrollGeneration else { return }
+                if hasConfirmedWorkflow, shouldShowIdentification { break }
+                await Task.yield()
+                try? await Task.sleep(nanoseconds: 75_000_000)
+            }
+
+            guard generation == captureAutoScrollGeneration,
+                  generation != consumedAutoScrollGeneration,
+                  hasConfirmedWorkflow,
+                  shouldShowIdentification else { return }
+
+            scrollTargetID = postCaptureAutoScrollTarget
+            consumedAutoScrollGeneration = generation
+        }
+    }
+
+    private var postCaptureAutoScrollTarget: String {
+        if session.isAwaitingMultiAngleName, session.currentImage == nil {
+            return CaptureScrollID.identifyProduct
+        }
+        if session.currentImage != nil {
+            return CaptureScrollID.retakePhoto
+        }
+        return CaptureScrollID.identifyProduct
+    }
+
     private func handlePhotoCaptured() {
-        // Multi-angle: buffer every angle first; name once after the last shot.
         if session.multiAngleEnabled {
             let hasMoreAngles = session.bufferCurrentMultiAngleShot()
-            qualityReport = nil
             if hasMoreAngles {
-                instruction = "Saved \(session.pendingMultiAngleCaptures.count)/\(session.activeAngles.count). Now take \(session.currentAngleLabel)."
+                instruction = "Saved \(session.pendingMultiAngleCaptures.count)/\(session.activeAngles.count). Now capture \(session.currentAngleLabel)."
                 Feedback.success(vibrate: session.vibrateEnabled, beep: session.beepEnabled)
                 withAnimation { showAddedToast = true }
                 Task {
                     try? await Task.sleep(nanoseconds: 600_000_000)
                     await MainActor.run {
                         withAnimation { showAddedToast = false }
-                        if shouldOfferContinuousCapture {
-                            scheduleAutoOpenCamera(after: 0.45)
-                        }
+                        if shouldOfferContinuousCapture { scheduleAutoOpenCamera(after: 0.45) }
                     }
                 }
             } else {
@@ -1205,6 +908,7 @@ struct CaptureFlowView: View {
                     session.currentUPC = ""
                     manualUPCFocused = false
                     presentScannerSoon(after: 0.35, message: "One scan names the whole multi-angle set.")
+                    scheduleAutoScrollAfterCapture()
                 case .randomName:
                     let name = FileNameRules.randomNativeName()
                     instruction = "All angles ready. Applying \(name)-1…"
@@ -1212,6 +916,7 @@ struct CaptureFlowView: View {
                 case .manualInput:
                     manualNameInput = ""
                     instruction = "All angles ready. Enter one name for the set."
+                    scheduleAutoScrollAfterCapture()
                 }
             }
             return
@@ -1224,10 +929,8 @@ struct CaptureFlowView: View {
             showManualUPCEntry = false
             session.currentUPC = ""
             manualUPCFocused = false
-            presentScannerSoon(
-                after: 0.4,
-                message: "Point the camera at the barcode — scanning is automatic."
-            )
+            presentScannerSoon(after: 0.4, message: "Point the camera at the barcode — scanning is automatic.")
+            scheduleAutoScrollAfterCapture()
         case .randomName:
             let name = FileNameRules.randomNativeName()
             instruction = "Photo captured. Adding random name \(name).jpg..."
@@ -1235,6 +938,7 @@ struct CaptureFlowView: View {
         case .manualInput:
             manualNameInput = ""
             instruction = "Photo captured. Enter image name to add it to queue."
+            scheduleAutoScrollAfterCapture()
         }
     }
 
@@ -1258,7 +962,8 @@ struct CaptureFlowView: View {
             if session.duplicateUPCExists(cleaned) {
                 pendingDuplicateName = cleaned
                 instruction = "UPC \(cleaned) already in queue. Replace the set, add copies, or cancel."
-                dismissCaptureKeyboard()
+                manualUPCFocused = false
+                manualNameFocused = false
                 withAnimation { activeOverlay = .duplicate }
                 return
             }
@@ -1266,7 +971,7 @@ struct CaptureFlowView: View {
             return
         }
 
-        guard session.currentImage != nil else {
+        guard session.currentImage != nil || session.isAwaitingMultiAngleName else {
             instruction = "Capture product photo first."
             showScanner = false
             return
@@ -1275,7 +980,8 @@ struct CaptureFlowView: View {
         if session.duplicateExists(upc: cleaned, angle: itemAngle) {
             pendingDuplicateName = cleaned
             instruction = "Duplicate found for \(cleaned) / \(itemAngle.rawValue). Choose Replace or Add Anyway."
-            dismissCaptureKeyboard()
+            manualUPCFocused = false
+            manualNameFocused = false
             withAnimation { activeOverlay = .duplicate }
             return
         }
@@ -1307,7 +1013,6 @@ struct CaptureFlowView: View {
                 if session.imageNamingMode == .scannedUPC {
                     session.recordSuccessfulBarcode(cleaned)
                 }
-                qualityReport = nil
                 session.startNextProduct()
                 withAnimation { showAddedToast = true }
 
@@ -1320,7 +1025,7 @@ struct CaptureFlowView: View {
                                 instruction = "Set complete. Product #\(session.nextSequence) — camera opening…"
                                 scheduleAutoOpenCamera(after: 0.65)
                             } else {
-                                instruction = "Set complete. Product #\(session.nextSequence) ready. Tap Capture Product Photo."
+                                instruction = "Set complete. Product #\(session.nextSequence) ready. Tap Capture."
                             }
                         } else {
                             instruction = "Multi-angle set complete. Opening preview."
@@ -1374,7 +1079,6 @@ struct CaptureFlowView: View {
                 if session.imageNamingMode == .scannedUPC {
                     session.recordSuccessfulBarcode(cleaned)
                 }
-                qualityReport = nil
                 let hasNextAngle = session.advanceAfterSuccessfulQueue()
                 withAnimation { showAddedToast = true }
 
@@ -1383,16 +1087,14 @@ struct CaptureFlowView: View {
                     await MainActor.run {
                         withAnimation { showAddedToast = false }
                         if hasNextAngle {
-                            instruction = "Added. Now take \(session.currentAngleLabel) photo for the same product."
-                            if shouldOfferContinuousCapture {
-                                scheduleAutoOpenCamera(after: 0.65)
-                            }
+                            instruction = "Added. Now capture \(session.currentAngleLabel) for the same product."
+                            if shouldOfferContinuousCapture { scheduleAutoOpenCamera(after: 0.65) }
                         } else if activeMode == .batch {
                             if shouldOfferContinuousCapture {
                                 instruction = "Product complete. Product #\(session.nextSequence) — camera opening..."
                                 scheduleAutoOpenCamera(after: 0.65)
                             } else {
-                                instruction = "Product complete. Product #\(session.nextSequence) ready. Tap Capture Product Photo."
+                                instruction = "Product complete. Product #\(session.nextSequence) ready. Tap Capture."
                             }
                         } else {
                             instruction = "Capture complete. Opening preview."
@@ -1412,13 +1114,57 @@ struct CaptureFlowView: View {
 }
 
 private enum CaptureFlowOverlay: Identifiable {
-    case qualityWarning
     case duplicate
 
     var id: String {
         switch self {
-        case .qualityWarning: return "qualityWarning"
         case .duplicate: return "duplicate"
         }
     }
 }
+
+#if DEBUG
+#Preview("Empty Capture") {
+    NavigationStack {
+        CaptureFlowView(mode: .single)
+            .environmentObject(CapturePreviewSupport.makeSession())
+    }
+}
+
+#Preview("Single Product") {
+    NavigationStack {
+        CaptureFlowView(mode: .single)
+            .environmentObject(CapturePreviewSupport.makeSessionWithCurrentImage())
+    }
+}
+
+#Preview("Batch") {
+    NavigationStack {
+        CaptureFlowView(mode: .batch)
+            .environmentObject(CapturePreviewSupport.makeSession())
+    }
+}
+
+#Preview("Multi-Angle") {
+    NavigationStack {
+        CaptureFlowView(mode: .single)
+            .environmentObject(CapturePreviewSupport.makeMultiAngleSession())
+    }
+}
+
+#Preview("Captured Product") {
+    NavigationStack {
+        CaptureFlowView(mode: .single)
+            .environmentObject(CapturePreviewSupport.makeSessionWithCurrentImage())
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        CaptureFlowView(mode: .single)
+            .environmentObject(CapturePreviewSupport.makeSession())
+    }
+    .preferredColorScheme(.dark)
+}
+#endif

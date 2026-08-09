@@ -247,18 +247,20 @@ final class LoadingStateManager: ObservableObject {
         if inlineDepth == 0 { inlineMessage = nil }
     }
 
-    /// Clears matching action keys and any leftover “Exporting…” global overlay (share cancel safety).
+    /// Clears matching action keys and any leftover export/build global overlay (share cancel safety).
     @MainActor
     func endActions(prefix: String) {
         let matching = runningActionKeys.filter { $0.hasPrefix(prefix) }
         if !matching.isEmpty {
             runningActionKeys.subtract(matching)
         }
-        if let message = globalTask?.message,
-           message.localizedCaseInsensitiveContains("exporting") {
-            globalDepth = 0
-            globalTask = nil
-            InteractionHUDController.shared.refreshHitTesting()
+        if let message = globalTask?.message {
+            let lower = message.lowercased()
+            if lower.contains("export") || lower.contains("building") || lower.contains("package") {
+                globalDepth = 0
+                globalTask = nil
+                InteractionHUDController.shared.refreshHitTesting()
+            }
         }
     }
 

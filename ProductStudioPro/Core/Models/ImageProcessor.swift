@@ -7,9 +7,10 @@ import CoreImage.CIFilterBuiltins
 
 // MARK: - Image Processing
 
-enum CaptureQualityLimits {
+enum ImageProcessingLimits {
     /// Stored original cap — high enough for export, low enough for rapid multi-capture.
-    static let cameraOriginalMaxLongEdge: CGFloat = 4096
+    /// Lowered from 4096 as part of the fast+good / lower-memory-pressure profile.
+    static let cameraOriginalMaxLongEdge: CGFloat = 3072
     /// Vision / polish input — matches stored original so first-pass quality equals Apply.
     static let cameraProcessingMaxLongEdge: CGFloat = cameraOriginalMaxLongEdge
     /// Bulk import decode / process cap — same as camera for consistent catalog quality.
@@ -39,7 +40,7 @@ enum ImageProcessor {
         }
     }
 
-    /// Caps input pixel dimensions before Vision / Studio AI to reduce peak memory on multi-import.
+    /// Caps input pixel dimensions before Vision cutout / polish to reduce peak memory on multi-import.
     static func downsampleIfNeededForImportPipeline(_ image: UIImage, maxLongEdgePixels: CGFloat) -> UIImage {
         guard let cg = image.cgImage else { return image }
         let w = CGFloat(cg.width)
@@ -80,6 +81,22 @@ enum ImageProcessor {
         case .rightMirrored: return 7
         @unknown default: return 1
         }
+    }
+
+    /// Rejects memory-pressure placeholders and other non-exportable bitmaps.
+    static func isValidExportBitmap(_ image: UIImage) -> Bool {
+        if image === CapturedProduct.diskBackedOriginalPlaceholder { return false }
+        let w = image.size.width * image.scale
+        let h = image.size.height * image.scale
+        return w > 8 && h > 8
+    }
+
+    /// Long-edge cap for live preview — keeps polish/Vision off full 12MP originals during slider/enhance passes.
+    static func previewSourceLongEdgeCap(canvasWidth: Int, canvasHeight: Int, preferInteractive: Bool) -> CGFloat {
+        let canvasLong = CGFloat(max(canvasWidth, canvasHeight, 280))
+        let multiplier: CGFloat = preferInteractive ? 1.15 : 1.55
+        let cap = canvasLong * multiplier
+        return min(max(640, cap), ImageProcessingLimits.unifiedProcessingMaxLongEdge)
     }
 
     /// Thread-safe normalization using Core Image (no main-thread `UIGraphicsImageRenderer`).
@@ -712,11 +729,15 @@ enum ImageProcessor {
         toneAdjustments: ManualToneAdjustments = .neutral,
         cutoutFeather: Double = 0.35,
         cutoutBrushMaskData: Data? = nil,
+        studioShadow: SoftSyntheticShadowSettings = .studioDefault,
         applyBrandMark: Bool = true,
-        imageNameText: String? = nil
+        imageNameText: String? = nil,
+        maxSourceLongEdge: CGFloat = ImageProcessingLimits.unifiedProcessingMaxLongEdge
     ) -> (image: UIImage, didRemoveBackground: Bool) {
         let fillSpec = backgroundFillSpec ?? BackgroundFillSpec.fromLegacy(style: backgroundStyle, hexes: gradientColorHexes)
-        let input = polishEnabled ? polishInput(image, mode: enhancementMode, strength: studioAIStrength, smartColorAccuracy: smartColorAccuracy, smartUpscale: smartUpscale) : image
+        let resolvedStudioShadow = polishEnabled ? SoftSyntheticShadowSettings.off : studioShadow
+        let capped = downsampleIfNeededForImportPipeline(image, maxLongEdgePixels: maxSourceLongEdge)
+        let input = polishEnabled ? AIPolishEngine.enhance(capped, pass: .preComposite) : capped
         let layoutFill = effectiveLayoutFillRatio(
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
@@ -742,9 +763,10 @@ enum ImageProcessor {
             flipHorizontal: flipHorizontal,
             flipVertical: flipVertical,
             cutoutFeather: cutoutFeather,
-            cutoutBrushMaskData: cutoutBrushMaskData
+            cutoutBrushMaskData: cutoutBrushMaskData,
+            studioShadow: resolvedStudioShadow
            ) {
-            let polished = polishEnabled ? finalPolish(bgRemoved, mode: enhancementMode, strength: studioAIStrength, smartColorAccuracy: smartColorAccuracy, smartUpscale: smartUpscale) : bgRemoved
+            let polished = polishEnabled ? AIPolishEngine.enhance(bgRemoved, pass: .postComposite) : bgRemoved
             let tuned = finishPhotoExportTuning(
                 polished,
                 photoFilter: photoFilter,
@@ -773,7 +795,7 @@ enum ImageProcessor {
             flipHorizontal: flipHorizontal,
             flipVertical: flipVertical
         )
-        let polished = polishEnabled ? finalPolish(squared, mode: enhancementMode, strength: studioAIStrength, smartColorAccuracy: smartColorAccuracy, smartUpscale: smartUpscale) : squared
+        let polished = polishEnabled ? AIPolishEngine.enhance(squared, pass: .postComposite) : squared
         let tuned = finishPhotoExportTuning(
             polished,
             photoFilter: photoFilter,
@@ -906,16 +928,20 @@ enum ImageProcessor {
     /// Bounding box of the processed subject in an After preview (differs from studio/canvas background).
     /// Coordinates are in the normalized CGImage pixel space of `image`.
     static func contentBoundsInProcessedPreview(_ image: UIImage, maxAnalysisEdge: CGFloat = 768) -> CGRect? {
-        guard let cg = normalizedCGImage(image) else { return nil }
+        guard isValidExportBitmap(image), let cg = normalizedCGImage(image) else { return nil }
         let ow = CGFloat(cg.width)
         let oh = CGFloat(cg.height)
+        guard ow >= 2, oh >= 2 else { return nil }
         let longest = max(ow, oh, 1)
         let scaleDown = longest > maxAnalysisEdge ? maxAnalysisEdge / longest : 1
         let tw = max(1, Int((ow * scaleDown).rounded()))
         let th = max(1, Int((oh * scaleDown).rounded()))
+        guard tw >= 2, th >= 2 else { return nil }
         let bytesPerPixel = 4
         let bytesPerRow = tw * bytesPerPixel
-        var pixels = [UInt8](repeating: 0, count: th * bytesPerRow)
+        let pixelCount = th * bytesPerRow
+        guard pixelCount >= bytesPerPixel * 4 else { return nil }
+        var pixels = [UInt8](repeating: 0, count: pixelCount)
         guard let ctx = CGContext(
             data: &pixels,
             width: tw,
@@ -929,11 +955,14 @@ enum ImageProcessor {
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: tw, height: th))
 
         func sample(_ x: Int, _ y: Int) -> (Int, Int, Int) {
-            let i = (y * bytesPerRow) + (x * bytesPerPixel)
+            let cx = min(max(0, x), tw - 1)
+            let cy = min(max(0, y), th - 1)
+            let i = (cy * bytesPerRow) + (cx * bytesPerPixel)
+            guard i + 2 < pixels.count else { return (0, 0, 0) }
             return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]))
         }
-        let insetX = max(1, tw / 50)
-        let insetY = max(1, th / 50)
+        let insetX = min(max(1, tw / 50), tw - 1)
+        let insetY = min(max(1, th / 50), th - 1)
         let corners = [
             sample(insetX, insetY),
             sample(tw - 1 - insetX, insetY),
@@ -955,6 +984,7 @@ enum ImageProcessor {
             let row = y * bytesPerRow
             for x in 0..<tw {
                 let i = row + x * bytesPerPixel
+                guard i + 3 < pixels.count else { continue }
                 let a = Int(pixels[i + 3])
                 if a < 12 { continue }
                 let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
@@ -1056,6 +1086,7 @@ enum ImageProcessor {
         // Where the subject sits in After (ground truth), else the same layout math After uses.
         let productRect: CGRect = {
             if let afterImage,
+               isValidExportBitmap(afterImage),
                let afterBounds = contentBoundsInProcessedPreview(afterImage),
                afterBounds.width > 4, afterBounds.height > 4 {
                 return afterBounds
@@ -1261,9 +1292,11 @@ enum ImageProcessor {
         toneAdjustments: ManualToneAdjustments = .neutral,
         cutoutFeather: Double = 0.35,
         cutoutBrushMaskData: Data? = nil,
+        studioShadow: SoftSyntheticShadowSettings = .studioDefault,
         applyBrandMark: Bool = true,
         imageNameText: String? = nil,
-        qos: DispatchQoS.QoSClass = .userInitiated
+        qos: DispatchQoS.QoSClass = .userInitiated,
+        maxSourceLongEdge: CGFloat = ImageProcessingLimits.unifiedProcessingMaxLongEdge
     ) async -> (image: UIImage, didRemoveBackground: Bool) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: qos).async {
@@ -1293,8 +1326,10 @@ enum ImageProcessor {
                         toneAdjustments: toneAdjustments,
                         cutoutFeather: cutoutFeather,
                         cutoutBrushMaskData: cutoutBrushMaskData,
+                        studioShadow: studioShadow,
                         applyBrandMark: applyBrandMark,
-                        imageNameText: imageNameText
+                        imageNameText: imageNameText,
+                        maxSourceLongEdge: maxSourceLongEdge
                     )
                 }
                 continuation.resume(returning: result)
@@ -1302,17 +1337,17 @@ enum ImageProcessor {
         }
     }
 
-    static func whiteSquare(_ image: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false) -> UIImage {
-        drawImageOnCanvas(image, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical)
+    static func whiteSquare(_ image: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, studioShadow: SoftSyntheticShadowSettings = .off) -> UIImage {
+        drawImageOnCanvas(image, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical, studioShadow: studioShadow)
     }
 
-    static func subjectOnWhiteSquare(_ subject: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false) -> UIImage {
+    static func subjectOnWhiteSquare(_ subject: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, studioShadow: SoftSyntheticShadowSettings = .studioDefault) -> UIImage {
         let cleaned = cleanupTransparentEdges(subject, mode: mode, strength: strength)
         let cropped = cropTransparentMargins(cleaned) ?? cleaned
-        return drawImageOnCanvas(cropped, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical)
+        return drawImageOnCanvas(cropped, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical, studioShadow: studioShadow)
     }
 
-    private static func drawImageOnCanvas(_ image: UIImage, canvasWidth: Int, canvasHeight: Int, fillRatio: Double, strength: StudioAIStrength, backgroundColor: UIColor, secondaryBackgroundColor: UIColor, backgroundStyle: BackgroundCanvasStyle, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false) -> UIImage {
+    private static func drawImageOnCanvas(_ image: UIImage, canvasWidth: Int, canvasHeight: Int, fillRatio: Double, strength: StudioAIStrength, backgroundColor: UIColor, secondaryBackgroundColor: UIColor, backgroundStyle: BackgroundCanvasStyle, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, studioShadow: SoftSyntheticShadowSettings = .studioDefault) -> UIImage {
         let fillSpec = backgroundFillSpec ?? BackgroundFillSpec.fromLegacy(style: backgroundStyle, hexes: gradientColorHexes)
         let bgCap: CGFloat? = fillSpec.fillKind == .image
             ? CGFloat(max(canvasWidth, canvasHeight)) * 1.35
@@ -1330,6 +1365,7 @@ enum ImageProcessor {
             subjectRotationDegrees: subjectRotationDegrees,
             flipHorizontal: flipHorizontal,
             flipVertical: flipVertical,
+            studioShadow: studioShadow,
             maxBackgroundLongEdge: bgCap
         )
     }
@@ -1535,7 +1571,7 @@ enum ImageProcessor {
     private static let cutoutCacheLock = NSLock()
     private static var cutoutCache: [String: UIImage] = [:]
     private static var cutoutCacheOrder: [String] = []
-    private static let cutoutCacheMaxEntries = 24
+    private static let cutoutCacheMaxEntries = 6
 
     /// Drops Vision cutout bitmaps — called from the memory purge ladder.
     static func clearCutoutCache() {
@@ -1676,7 +1712,7 @@ enum ImageProcessor {
         }
     }
 
-    static func appleSubjectOnWhiteSquare(_ image: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, cutoutFeather: Double = 0.35, cutoutBrushMaskData: Data? = nil) -> UIImage? {
+    static func appleSubjectOnWhiteSquare(_ image: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, cutoutFeather: Double = 0.35, cutoutBrushMaskData: Data? = nil, studioShadow: SoftSyntheticShadowSettings = .studioDefault) -> UIImage? {
         guard let subject = extractForegroundCutout(
             from: image,
             mode: mode,
@@ -1684,7 +1720,7 @@ enum ImageProcessor {
             cutoutFeather: cutoutFeather,
             cutoutBrushMaskData: cutoutBrushMaskData
         ) else { return nil }
-        return subjectOnWhiteSquare(subject, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, mode: mode, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical)
+        return subjectOnWhiteSquare(subject, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, mode: mode, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical, studioShadow: studioShadow)
     }
 
     private static func adaptiveProfile(for image: UIImage) -> AdaptiveImageProfile {
@@ -1737,243 +1773,6 @@ enum ImageProcessor {
         return AdaptiveImageProfile(averageBrightness: avg, contrast: contrast, blurScore: blurScore, shadowDepth: shadows / count, saturation: satSum / count)
     }
 
-    private static func polishInput(_ image: UIImage, mode: PhotoEnhancementMode, strength: StudioAIStrength, smartColorAccuracy: Bool = true, smartUpscale: Bool = false) -> UIImage {
-        guard let cg = normalizedCGImage(image) else { return image }
-        let context = sharedCIContext
-        let profile = adaptiveProfile(for: image)
-        let rawInput = CIImage(cgImage: cg)
-        let input = autoWhiteBalanced(rawInput, context: context, strength: mode == .studioAI ? strength : .natural, profile: profile)
-        let isStudio = mode == .studioAI
-
-        let basePower: Float
-        switch (isStudio, strength) {
-        case (false, _): basePower = 0.55
-        case (true, .natural): basePower = 0.78
-        case (true, .strong): basePower = 1.00
-        case (true, .ultra): basePower = 1.18
-        }
-
-        // Apple Photos style base: exposure, highlights/shadows, vibrance, definition, denoise, then safe sharpening.
-        let exposureEV = Float((profile.isDark ? 0.18 : 0.06) + (profile.isVeryDark ? 0.12 : 0.0)) * basePower
-        let shadowAmount = Float((profile.shadowDepth > 0.24 ? 0.42 : 0.24) + (profile.isVeryDark ? 0.12 : 0.0)) * basePower
-        let highlightAmount = Float(profile.averageBrightness > 0.72 ? 0.72 : 0.86)
-        let vibranceAmount = Float((profile.isLowColor ? 0.18 : 0.08) * Double(basePower))
-        let contrastAmount = Float((profile.isFlat ? 1.10 : 1.045) + (isStudio && strength != .natural ? 0.025 : 0.0))
-        let brightnessAmount = Float(profile.isDark ? 0.014 : 0.004)
-        let noiseLevel = Float((profile.isDark ? 0.045 : 0.018) * Double(basePower))
-        let noiseSharpness = Float(profile.isSoft ? 0.34 : 0.48)
-        let sharpenAmount: Float = {
-            if profile.isAlreadySharp { return isStudio && strength == .ultra ? 0.18 : 0.16 }
-            if profile.isSoft { return isStudio ? (strength == .ultra ? 0.38 : 0.34) : 0.22 }
-            return isStudio ? (strength == .strong ? 0.30 : 0.24) : 0.18
-        }()
-
-        let exposure = CIFilter.exposureAdjust()
-        exposure.inputImage = input
-        exposure.ev = exposureEV
-
-        let shadows = CIFilter.highlightShadowAdjust()
-        shadows.inputImage = exposure.outputImage
-        shadows.shadowAmount = min(0.62, shadowAmount)
-        shadows.highlightAmount = highlightAmount
-
-        let vibrance = CIFilter.vibrance()
-        vibrance.inputImage = shadows.outputImage
-        vibrance.amount = vibranceAmount
-
-        let color = CIFilter.colorControls()
-        color.inputImage = vibrance.outputImage
-        color.saturation = smartColorAccuracy ? 1.0 : 1.04
-        color.brightness = brightnessAmount
-        color.contrast = contrastAmount
-
-        let noise = CIFilter.noiseReduction()
-        noise.inputImage = color.outputImage
-        noise.noiseLevel = noiseLevel
-        noise.sharpness = noiseSharpness
-
-        let clarity = localClarity(noise.outputImage, mode: mode, strength: strength, profile: profile)
-
-        let sharpen = CIFilter.sharpenLuminance()
-        sharpen.inputImage = clarity
-        sharpen.sharpness = sharpenAmount
-
-        var pipe: CIImage? = sharpen.outputImage
-
-        if isStudio {
-            let gamma = CIFilter.gammaAdjust()
-            gamma.inputImage = pipe
-            gamma.power = strength == .ultra ? 0.94 : (strength == .strong ? 0.97 : 0.99)
-            pipe = gamma.outputImage
-
-            let hi2 = CIFilter.highlightShadowAdjust()
-            hi2.inputImage = pipe
-            hi2.highlightAmount = 0.88
-            hi2.shadowAmount = Float(strength == .natural ? 0.06 : 0.10) * basePower
-            pipe = hi2.outputImage
-
-            let clamp = CIFilter.colorClamp()
-            clamp.inputImage = pipe
-            let floorv: CGFloat = strength == .ultra ? 0.015 : 0
-            clamp.minComponents = CIVector(x: floorv, y: floorv, z: floorv, w: 0)
-            clamp.maxComponents = CIVector(x: 1, y: 1, z: 1, w: 1)
-            pipe = clamp.outputImage
-        }
-
-        // Smart Upscale: visible super-sampling + extra micro-contrast on input so detail survives the canvas resize.
-        if smartUpscale, let base = pipe {
-            let ex = base.extent
-            let detail = CIFilter.unsharpMask()
-            detail.inputImage = base
-            detail.radius = 1.6
-            detail.intensity = 0.42
-            let detailed = detail.outputImage ?? base
-            let f: CGFloat = 1.6
-            let big = detailed.transformed(by: CGAffineTransform(scaleX: f, y: f))
-            let lanczos = CIFilter.lanczosScaleTransform()
-            lanczos.inputImage = big
-            lanczos.scale = Float(1 / f)
-            lanczos.aspectRatio = 1
-            pipe = lanczos.outputImage?.cropped(to: ex)
-        }
-
-        guard let output = pipe, let outCG = context.createCGImage(output, from: output.extent) else { return image }
-        return UIImage(cgImage: outCG, scale: image.scale, orientation: .up)
-    }
-
-    private static func autoWhiteBalanced(_ image: CIImage, context: CIContext, strength: StudioAIStrength, profile: AdaptiveImageProfile) -> CIImage {
-        let extent = image.extent
-        guard extent.width > 0, extent.height > 0 else { return image }
-        let sampleSize = 20
-        var bitmap = [UInt8](repeating: 0, count: sampleSize * sampleSize * 4)
-        let sampleRect = CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize)
-        let scaleX = CGFloat(sampleSize) / extent.width
-        let scaleY = CGFloat(sampleSize) / extent.height
-        let sampled = image.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        context.render(sampled, toBitmap: &bitmap, rowBytes: sampleSize * 4, bounds: sampleRect, format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
-        var r = 0.0, g = 0.0, b = 0.0, count = 0.0
-        for i in stride(from: 0, to: bitmap.count, by: 4) {
-            let rr = Double(bitmap[i]) / 255.0
-            let gg = Double(bitmap[i + 1]) / 255.0
-            let bb = Double(bitmap[i + 2]) / 255.0
-            let maxc = max(rr, max(gg, bb))
-            let minc = min(rr, min(gg, bb))
-            if maxc > 0.18 && maxc < 0.98 && (maxc - minc) < 0.42 {
-                r += rr; g += gg; b += bb; count += 1
-            }
-        }
-        guard count > 8 else { return image }
-        r /= count; g /= count; b /= count
-        let gray = (r + g + b) / 3.0
-        let amount: Double
-        switch strength { case .natural: amount = 0.16; case .strong: amount = 0.24; case .ultra: amount = profile.isDark ? 0.28 : 0.22 }
-        let targetR = min(1.0, max(0.76, gray + (gray - r) * amount + 0.82))
-        let targetG = min(1.0, max(0.76, gray + (gray - g) * amount + 0.82))
-        let targetB = min(1.0, max(0.76, gray + (gray - b) * amount + 0.82))
-        let white = CIFilter.whitePointAdjust()
-        white.inputImage = image
-        white.color = CIColor(red: targetR, green: targetG, blue: targetB)
-        return white.outputImage ?? image
-    }
-
-    private static func localClarity(_ image: CIImage?, mode: PhotoEnhancementMode, strength: StudioAIStrength, profile: AdaptiveImageProfile) -> CIImage? {
-        guard let image else { return nil }
-        let isStudio = mode == .studioAI
-        let radius: Float
-        let intensity: Float
-        if !isStudio {
-            radius = 2.4; intensity = profile.isSoft ? 0.09 : 0.06
-        } else {
-            switch strength {
-            case .natural:
-                radius = 3.0; intensity = profile.isAlreadySharp ? 0.06 : 0.10
-            case .strong:
-                radius = 4.0; intensity = profile.isAlreadySharp ? 0.09 : 0.14
-            case .ultra:
-                radius = profile.isSoft ? 4.8 : 3.7; intensity = profile.isAlreadySharp ? 0.08 : 0.13
-            }
-        }
-        let clarity = CIFilter.unsharpMask()
-        clarity.inputImage = image
-        clarity.radius = radius
-        clarity.intensity = intensity
-        return clarity.outputImage
-    }
-
-    private static func finalPolish(_ image: UIImage, mode: PhotoEnhancementMode, strength: StudioAIStrength, smartColorAccuracy: Bool = true, smartUpscale: Bool = false) -> UIImage {
-        guard let cg = normalizedCGImage(image) else { return image }
-        let profile = adaptiveProfile(for: image)
-        let rawInput = CIImage(cgImage: cg)
-        let context = sharedCIContext
-
-        let isStudio = mode == .studioAI
-        let vibranceAmount: Float
-        let sharpenAmount: Float
-        let finalContrast: Float
-        if !isStudio {
-            vibranceAmount = 0.03; sharpenAmount = 0.12; finalContrast = 1.00
-        } else {
-            switch strength {
-            case .natural:
-                vibranceAmount = smartColorAccuracy ? 0.03 : 0.08; sharpenAmount = profile.isAlreadySharp ? 0.10 : 0.16; finalContrast = 1.005
-            case .strong:
-                vibranceAmount = smartColorAccuracy ? 0.05 : 0.14; sharpenAmount = profile.isAlreadySharp ? 0.14 : 0.22; finalContrast = 1.018
-            case .ultra:
-                vibranceAmount = smartColorAccuracy ? 0.05 : 0.13; sharpenAmount = profile.isAlreadySharp ? 0.12 : (profile.isSoft ? 0.24 : 0.18); finalContrast = 1.015
-            }
-        }
-
-        let vibrance = CIFilter.vibrance()
-        vibrance.inputImage = rawInput
-        vibrance.amount = vibranceAmount
-
-        let sharpen = CIFilter.sharpenLuminance()
-        sharpen.inputImage = vibrance.outputImage
-        sharpen.sharpness = sharpenAmount
-
-        let color = CIFilter.colorControls()
-        color.inputImage = sharpen.outputImage
-        color.saturation = 1.0
-        color.brightness = 0.0
-        color.contrast = finalContrast
-
-        var pipe: CIImage? = color.outputImage
-        if isStudio {
-            let micro = CIFilter.unsharpMask()
-            micro.inputImage = pipe
-            micro.radius = 1.2
-            micro.intensity = strength == .ultra ? 0.45 : 0.32
-            pipe = micro.outputImage
-        }
-        if smartUpscale, let base = pipe {
-            let ex = base.extent
-            // Final pass micro-contrast + true Lanczos super-sample makes Smart Upscale visible at any mode/strength.
-            let micro = CIFilter.unsharpMask()
-            micro.inputImage = base
-            micro.radius = 1.3
-            micro.intensity = isStudio ? 0.55 : 0.40
-            let microed = micro.outputImage ?? base
-            let f: CGFloat = 1.5
-            let big = microed.transformed(by: CGAffineTransform(scaleX: f, y: f))
-            let l = CIFilter.lanczosScaleTransform()
-            l.inputImage = big
-            l.scale = Float(1 / f)
-            l.aspectRatio = 1
-            pipe = l.outputImage?.cropped(to: ex)
-
-            // Add a luminance sharpen after resample for crisp product edges (the bit users actually see).
-            if let sharper = pipe {
-                let crisp = CIFilter.sharpenLuminance()
-                crisp.inputImage = sharper
-                crisp.sharpness = isStudio ? 0.55 : 0.45
-                pipe = crisp.outputImage
-            }
-        }
-
-        guard let output = pipe, let outCG = context.createCGImage(output, from: output.extent) else { return image }
-        return UIImage(cgImage: outCG, scale: image.scale, orientation: .up)
-    }
-
     private static func smoothMask(
         _ mask: CIImage,
         mode: PhotoEnhancementMode,
@@ -1981,22 +1780,12 @@ enum ImageProcessor {
         feather: Double = 0.35
     ) -> CIImage {
         let t = min(1, max(0, feather))
-        // Hard edge when feather ≈ 0 and not Studio AI; otherwise soften for all modes.
-        if t < 0.02, mode != .studioAI { return mask }
+        // Hard edge when feather ≈ 0, otherwise soften.
+        if t < 0.02 { return mask }
 
-        let baseRadius: Float
-        let contrast: Float
-        let brightness: Float
-        switch (mode, strength) {
-        case (.studioAI, .natural):
-            baseRadius = 0.65; contrast = 1.14; brightness = 0.010
-        case (.studioAI, .strong):
-            baseRadius = 0.95; contrast = 1.24; brightness = 0.018
-        case (.studioAI, .ultra):
-            baseRadius = 1.18; contrast = 1.34; brightness = 0.024
-        default:
-            baseRadius = 0.55; contrast = 1.10; brightness = 0.006
-        }
+        let baseRadius: Float = 0.55
+        let contrast: Float = 1.10
+        let brightness: Float = 0.006
         let blurRadius = baseRadius * Float(0.25 + t * 1.75)
 
         let blur = CIFilter.gaussianBlur()
@@ -2020,23 +1809,10 @@ enum ImageProcessor {
         guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Standard Clean also gets a gentle edge tidy — fixes soft halo on the cutout
-        // corners users reported (was previously skipped, leaving distorted-looking corners).
-        let transparentCutoff: UInt8
-        let boostLimit: UInt8
-        let alphaBoost: Int
-        if mode == .studioAI {
-            switch strength {
-            case .natural:
-                transparentCutoff = 22; boostLimit = 210; alphaBoost = 14
-            case .strong:
-                transparentCutoff = 32; boostLimit = 225; alphaBoost = 24
-            case .ultra:
-                transparentCutoff = 42; boostLimit = 235; alphaBoost = 34
-            }
-        } else {
-            transparentCutoff = 18; boostLimit = 200; alphaBoost = 10
-        }
+        // Standard Clean gets a gentle edge tidy — fixes soft halo on the cutout corners.
+        let transparentCutoff: UInt8 = 18
+        let boostLimit: UInt8 = 200
+        let alphaBoost: Int = 10
 
         for y in 0..<height {
             for x in 0..<width {
@@ -2054,7 +1830,7 @@ enum ImageProcessor {
         return UIImage(cgImage: out, scale: image.scale, orientation: .up)
     }
 
-    /// Variance-of-Laplacian sharpness score (higher = sharper). Used to report Smart Upscale deltas.
+    /// Variance-of-Laplacian sharpness score (higher = sharper).
     static func sharpnessScore(_ image: UIImage) -> Double {
         adaptiveProfile(for: image).blurScore
     }

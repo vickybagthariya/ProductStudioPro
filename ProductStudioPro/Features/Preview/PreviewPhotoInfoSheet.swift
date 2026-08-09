@@ -252,19 +252,20 @@ enum PreviewPhotoMetadataBuilder {
         }
 
         let fill = product.resolvedBackgroundFillSpec
-        result.append(
-            PreviewPhotoInfoSection(title: "Processing", rows: [
-                .init(title: "Product polish", value: product.polishEnabled ? "On" : "Off"),
-                .init(title: "Photo quality", value: product.enhancementMode == .studioAI
-                    ? "Studio AI · \(product.studioAIStrength.rawValue)"
-                    : product.enhancementMode.rawValue),
-                .init(title: "Background removed", value: product.backgroundRemoved ? "Yes" : "No"),
-                .init(title: "Smart upscale", value: product.upscaled ? "Applied" : "Not applied"),
-                .init(title: "Style filter", value: product.photoFilter == .none ? "None" : product.photoFilter.rawValue),
-                .init(title: "Filter intensity", value: product.photoFilter == .none ? "—" : "\(Int(product.photoFilterIntensity * 100))%"),
-                .init(title: "Auto enhance", value: product.adjustAutoEnhance ? "On" : "Off"),
-            ])
-        )
+        var processingRows: [PreviewPhotoInfoRow] = [
+            .init(title: "AI Polish", value: product.polishEnabled ? "Enhanced" : "Off"),
+            .init(title: "Background removed", value: product.backgroundRemoved ? "Yes" : "No"),
+            .init(title: "Style filter", value: product.photoFilter == .none ? "None" : product.photoFilter.rawValue),
+            .init(title: "Filter intensity", value: product.photoFilter == .none ? "—" : "\(Int(product.photoFilterIntensity * 100))%"),
+            .init(title: "Auto enhance", value: product.adjustAutoEnhance ? "On" : "Off"),
+        ]
+        if product.upscaled {
+            processingRows.insert(
+                .init(title: "Legacy upscale", value: "Applied (descale from More menu)"),
+                at: 3
+            )
+        }
+        result.append(PreviewPhotoInfoSection(title: "Processing", rows: processingRows))
 
         let canvasW = liveCanvasWidth ?? product.canvasWidth
         let canvasH = liveCanvasHeight ?? product.canvasHeight
@@ -290,9 +291,10 @@ enum PreviewPhotoMetadataBuilder {
             ] + gradientDetailRows(fill: fill))
         )
 
-        if product.preUpscaleCanvasWidth != nil || product.preUpscaleEnhancementMode != nil {
+        if product.upscaled,
+           product.preUpscaleCanvasWidth != nil || product.preUpscaleEnhancementMode != nil {
             result.append(
-                PreviewPhotoInfoSection(title: "Before upscale", rows: [
+                PreviewPhotoInfoSection(title: "Before legacy upscale", rows: [
                     .init(title: "Canvas", value: preUpscaleCanvas(product)),
                     .init(title: "Quality", value: preUpscaleQuality(product)),
                 ])
@@ -443,11 +445,8 @@ enum PreviewPhotoMetadataBuilder {
     }
 
     private static func preUpscaleQuality(_ product: CapturedProduct) -> String {
-        guard let mode = product.preUpscaleEnhancementMode else { return "—" }
-        if mode == .studioAI, let s = product.preUpscaleStudioAIStrength {
-            return "Studio AI · \(s.rawValue)"
-        }
-        return mode.rawValue
+        guard product.preUpscaleEnhancementMode != nil else { return "—" }
+        return PhotoEnhancementMode.standardClean.rawValue
     }
 
     private static func imagesMatchPixels(_ a: UIImage, _ b: UIImage) -> Bool {

@@ -384,6 +384,9 @@ enum SessionDiskStore {
         var toneWarmth: Double?
         var cutoutFeather: Double?
         var cutoutBrushMaskData: Data?
+        var studioShadowEnabled: Bool?
+        var studioShadowOpacity: Double?
+        var studioShadowBlur: Double?
         var preUpscaleCanvasWidth: Int?
         var preUpscaleCanvasHeight: Int?
         var preUpscaleEnhancementModeRaw: String?
@@ -437,6 +440,9 @@ enum SessionDiskStore {
             toneWarmth: product.toneAdjustments.warmth,
             cutoutFeather: product.cutoutFeather,
             cutoutBrushMaskData: product.cutoutBrushMaskData,
+            studioShadowEnabled: product.studioShadow.isEnabled,
+            studioShadowOpacity: product.studioShadow.opacity,
+            studioShadowBlur: product.studioShadow.blur,
             preUpscaleCanvasWidth: product.preUpscaleCanvasWidth,
             preUpscaleCanvasHeight: product.preUpscaleCanvasHeight,
             preUpscaleEnhancementModeRaw: product.preUpscaleEnhancementMode?.rawValue,
@@ -739,6 +745,11 @@ enum SessionDiskStore {
                 warmth: r.toneWarmth ?? 0
             )
             let feather = r.cutoutFeather ?? 0.35
+            let shadow = SoftSyntheticShadowSettings(
+                isEnabled: r.studioShadowEnabled ?? true,
+                opacity: r.studioShadowOpacity ?? SoftSyntheticShadowSettings.studioDefault.opacity,
+                blur: r.studioShadowBlur ?? SoftSyntheticShadowSettings.studioDefault.blur
+            ).clamped()
             let preMode = r.preUpscaleEnhancementModeRaw.flatMap { PhotoEnhancementMode(rawValue: $0) }
             let preStr = r.preUpscaleStudioAIStrengthRaw.flatMap { StudioAIStrength(rawValue: $0) }
             out.append(
@@ -768,6 +779,7 @@ enum SessionDiskStore {
                     toneAdjustments: tones,
                     cutoutFeather: feather,
                     cutoutBrushMaskData: r.cutoutBrushMaskData,
+                    studioShadow: shadow,
                     preUpscaleCanvasWidth: r.preUpscaleCanvasWidth,
                     preUpscaleCanvasHeight: r.preUpscaleCanvasHeight,
                     preUpscaleEnhancementMode: preMode,
@@ -795,12 +807,14 @@ enum SessionDiskStore {
 
 enum ZipArchiveWriter {
     static func makeZip(urls: [URL], zipDestination: URL) -> Bool {
-        guard !urls.isEmpty else { return false }
-        var entries: [(name: String, data: Data)] = []
-        for u in urls {
-            guard let data = try? Data(contentsOf: u) else { continue }
-            entries.append((u.lastPathComponent, data))
+        let entries: [(path: String, data: Data)] = urls.compactMap { url in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return (url.lastPathComponent, data)
         }
+        return makeZip(entries: entries, zipDestination: zipDestination)
+    }
+
+    static func makeZip(entries: [(path: String, data: Data)], zipDestination: URL) -> Bool {
         guard !entries.isEmpty else { return false }
         guard let zipData = buildStoredZip(entries: entries) else { return false }
         try? FileManager.default.createDirectory(at: zipDestination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -812,14 +826,14 @@ enum ZipArchiveWriter {
         }
     }
 
-    private static func buildStoredZip(entries: [(name: String, data: Data)]) -> Data? {
+    private static func buildStoredZip(entries: [(path: String, data: Data)]) -> Data? {
         var data = Data()
         var central = Data()
         let dosTime: UInt16 = 0
         let dosDate: UInt16 = 0
 
         for entry in entries {
-            let nameData = Data(entry.name.utf8)
+            let nameData = Data(entry.path.utf8)
             let nameLen = UInt16(nameData.count)
             let uncompressed = UInt32(entry.data.count)
             let crc = crc32(entry.data)

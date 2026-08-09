@@ -36,7 +36,7 @@ enum DeviceMemoryTier: String {
         }
     }
 
-    /// Free memory required before starting one heavy Vision / Studio AI pass.
+    /// Free memory required before starting one heavy Vision cutout / polish pass.
     var heavyPassHeadroomBytes: UInt64 {
         switch self {
         case .compact: return 120 * 1024 * 1024
@@ -54,11 +54,13 @@ enum DeviceMemoryTier: String {
     }
 
     /// Max processed display bitmaps to keep in RAM under pressure (newest first).
+    /// Kept intentionally small — fast+good profile favors lower memory pressure
+    /// over keeping large numbers of bitmaps resident.
     var keepProcessedInMemoryCount: Int {
         switch self {
-        case .compact: return 8
-        case .standard: return 14
-        case .pro: return 20
+        case .compact: return 4
+        case .standard: return 6
+        case .pro: return 8
         }
     }
 
@@ -102,7 +104,7 @@ struct MemoryPressureSnapshot: Equatable {
             actions.append("Let the phone cool — heavy polish is limited while hot.")
         }
         if isLowPowerMode {
-            actions.append("Turn off Low Power Mode for smoother Studio AI.")
+            actions.append("Turn off Low Power Mode for smoother processing.")
         }
         return Array(actions.prefix(5))
     }
@@ -263,15 +265,17 @@ final class MemoryPressureMonitor: ObservableObject {
         }
     }
 
-    /// Long-edge cap for Vision / Studio AI under pressure (keeps peak tensors smaller).
+    /// Long-edge cap for Vision / polish pipeline under pressure (keeps peak tensors smaller).
+    /// Baseline max is 3072, so normal pressure uses the full cap; caution / critical step down further.
     var recommendedProcessingLongEdge: CGFloat {
         switch latest.level {
-        case .normal: return CaptureQualityLimits.unifiedProcessingMaxLongEdge
-        case .caution: return min(CaptureQualityLimits.unifiedProcessingMaxLongEdge, 3072)
-        case .critical: return min(CaptureQualityLimits.unifiedProcessingMaxLongEdge, 2048)
+        case .normal: return min(ImageProcessingLimits.unifiedProcessingMaxLongEdge, 3072)
+        case .caution: return min(ImageProcessingLimits.unifiedProcessingMaxLongEdge, 2560)
+        case .critical: return min(ImageProcessingLimits.unifiedProcessingMaxLongEdge, 2048)
         }
     }
 
+    /// VisionKit Subject Lift is opt-in and skipped under critical memory, Low Power Mode, or heat.
     func allowsSubjectLift() -> Bool {
         guard latest.level < .critical else { return false }
         if latest.isLowPowerMode { return false }
@@ -307,5 +311,51 @@ final class MemoryPressureMonitor: ObservableObject {
             return .allowedWithGuidance(snap)
         }
         return .allowed
+    }
+}
+
+// MARK: - Heavy pipeline serialization
+
+/// Ensures only one Vision / polish / full reprocess pass runs at a time (avoids memory spikes + races).
+actor HeavyProcessingGate {
+    static let shared = HeavyProcessingGate()
+
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isLocked {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+
+    /// Waits briefly for headroom before starting a polish / Vision pass.
+    func waitForHeavyPassHeadroom(maxAttempts: Int = 12, intervalNanoseconds: UInt64 = 100_000_000) async {
+        for _ in 0..<maxAttempts {
+            let ready = await MainActor.run {
+                MemoryPressureMonitor.shared.canStartHeavyPass()
+            }
+            if ready { return }
+            try? await Task.sleep(nanoseconds: intervalNanoseconds)
+        }
+    }
+
+    func withExclusiveAccess<T>(_ operation: () async -> T) async -> T {
+        await waitForHeavyPassHeadroom()
+        await acquire()
+        defer { release() }
+        return await operation()
     }
 }

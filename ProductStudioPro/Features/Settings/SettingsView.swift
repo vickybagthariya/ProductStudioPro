@@ -68,46 +68,18 @@ struct SettingsView: View {
 
             // 4. Photo Quality — session defaults for new captures / imports
             DSSectionCard(title: "Photo Quality", icon: "wand.and.stars") {
-                DSHelperText("Defaults for new captures and imports. Edit & Polish and Queue can override per photo.")
+                DSHelperText("Defaults for new captures and imports. Standard Clean is fast and memory-light — tuned for smooth performance on large sessions.")
 
                 Toggle("Auto Background Removal", isOn: $session.autoBackgroundRemoval)
                     .tint(DS.ColorToken.accent)
                 DSDivider()
-                Toggle("Product Polish", isOn: $session.productPolishEnabled)
+                Toggle("AI Polish on new photos", isOn: $session.productPolishEnabled)
                     .tint(DS.ColorToken.accent)
+                DSHelperText("When on, new captures and imports get one-tap Enhance automatically. Tap Enhance in Preview to re-run polish anytime.")
                 DSDivider()
-
-                Picker("Enhancement Mode", selection: $session.photoEnhancementMode) {
-                    ForEach(PhotoEnhancementMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .tint(DS.ColorToken.accent)
-
-                DSHelperText(session.photoEnhancementMode.settingsGuidanceText)
-
-                if session.photoEnhancementMode == .studioAI {
-                    DSDivider()
-                    Picker("Studio AI Strength", selection: $session.studioAIStrength) {
-                        ForEach(StudioAIStrength.allCases) { strength in
-                            Text(strength.rawValue).tag(strength)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                Toggle("Subject Lift (Preview)", isOn: $session.subjectLiftEnabledInPreview)
                     .tint(DS.ColorToken.accent)
-                    DSHelperText(session.studioAIStrength.settingsGuidanceText)
-
-                    DSDivider()
-                    Toggle("Smart Color Accuracy", isOn: $session.smartColorAccuracyEnabled)
-                        .tint(DS.ColorToken.accent)
-                    DSHelperText("Keeps packaging/flavor colors more natural so Studio AI does not over-saturate or over-sharpen label details.")
-
-                    DSDivider()
-                    Toggle("Smart upscale (export)", isOn: $session.smartUpscaleOnExport)
-                        .tint(DS.ColorToken.accent)
-                    DSHelperText("Short Lanczos up/down pass plus micro-sharpening for a slightly crisper export. On-device only — not cloud super-resolution.")
-                }
+                DSHelperText("Optional Photos-style long-press subject lift in Preview (after background removal). Off by default. Automatically pauses under high memory pressure, Low Power Mode, or when the phone is hot.")
 
                 DSDivider()
                 DSDropdownActionMenu(
@@ -138,16 +110,25 @@ struct SettingsView: View {
                 DSHelperText("Applied to new captures and imports only. Home templates do not change this (App Defaults resets it to Original).")
 
                 DSDivider()
-                Button("Reset to Standard Clean defaults") {
-                    session.photoEnhancementMode = CatalogProcessingBaseline.mode
-                    session.studioAIStrength = CatalogProcessingBaseline.strength
+                Button("Reset polish & filter to defaults") {
                     session.productPolishEnabled = true
-                    session.smartUpscaleOnExport = false
                     session.preferredExportPhotoFilter = .none
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .frame(maxWidth: .infinity)
-                DSHelperText("Sets Standard Clean · Natural · Original (the app baseline). Does not change photos already in the queue.")
+                DSHelperText("Sets Product Polish on and the style filter back to Original (the app baseline). Does not change photos already in the queue.")
+            }
+
+            // Performance tips — fast+good profile guidance for large sessions.
+            DSSectionCard(title: "Performance Tips", icon: "gauge.with.dots.needle.67percent") {
+                DSHelperText("This app favors speed and lower memory pressure over maximum resolution:")
+                VStack(alignment: .leading, spacing: DS.Space.stack - 2) {
+                    Label("Keep sessions smaller — export finished photos, then clear or start a new session folder.", systemImage: "folder.badge.minus")
+                    Label("Close Preview / Markup when done editing, especially during bulk import.", systemImage: "xmark.circle")
+                    Label("Avoid Low Power Mode during heavy capture or export — it slows processing further.", systemImage: "battery.100")
+                }
+                .font(DS.TypeScale.caption)
+                .foregroundStyle(DS.ColorToken.secondaryLabel)
             }
 
             // 5. Background defaults (designer lives in Format Background / Home templates)
@@ -183,7 +164,7 @@ struct SettingsView: View {
 
                 DSDropdownActionMenu(
                     label: {
-                        Label("Canvas presets", systemImage: "rectangle.ratio.fill")
+                        Label("Canvas presets", systemImage: "aspectratio")
                             .foregroundStyle(DS.ColorToken.label)
                     },
                     items: CanvasPresetCatalog.settingsActionItems(
