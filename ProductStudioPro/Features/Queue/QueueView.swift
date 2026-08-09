@@ -361,7 +361,7 @@ struct QueueView: View {
 
     private var shareDialogTitle: String {
         let n = shareDialogProducts?.count ?? 0
-        return n == 1 ? "Share 1 image" : "Share \(n) images"
+        return n == 1 ? "Export 1 image" : "Export \(n) images"
     }
 
     private var shareDialogMessage: String {
@@ -369,7 +369,7 @@ struct QueueView: View {
         if n <= 1 {
             return "Recommended for one photo: JPG (or PNG cutout). ZIP packs JPG + CSV for handoff."
         }
-        return "Recommended for \(n) photos: ZIP (JPG + CSV). JPG/PNG also work for bulk share."
+        return "Recommended for \(n) photos: ZIP (JPG + CSV). JPG/PNG also work for bulk export."
     }
 
     /// When the user is in Select mode with at least one row checked, bulk actions use that subset only.
@@ -438,7 +438,8 @@ struct QueueView: View {
                     .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
             }
             .buttonStyle(.plainPressable)
-            .accessibilityLabel("Manage sessions")
+            .accessibilityLabel("Switch or manage sessions")
+            .accessibilityHint("Create, switch, rename, or delete queue sessions")
 
             DSDropdownActionMenu(
                 label: {
@@ -546,75 +547,33 @@ struct QueueView: View {
     }
 
     private var bulkActionBar: some View {
-        VStack(spacing: PSDesignSpacing.sm) {
-            if groupedCoverSelectionEnabled {
-                Button {
-                    groupedCoverNameText = ""
-                    groupedCoverNamePromptError = false
-                    showGroupedCoverNamePrompt = true
-                } label: {
-                    Label("Grouped Cover", systemImage: "square.grid.2x2")
-                        .labelStyle(.titleAndIcon)
-                        .frame(maxWidth: .infinity)
+        let allFilteredSelected = selectedProductIDs.count == filteredProducts.count && !filteredProducts.isEmpty
+        return QueueBulkSelectionBar(
+            selectedCount: selectedProductIDs.count,
+            showGroupedCover: groupedCoverSelectionEnabled,
+            selectAllTitle: allFilteredSelected ? "Clear" : "All",
+            folderEnabled: !selectedProductIDs.isEmpty,
+            bulkMenuItems: bulkSelectionActionItems,
+            bulkMenuEnabled: !selectedProductIDs.isEmpty,
+            onGroupedCover: {
+                groupedCoverNameText = ""
+                groupedCoverNamePromptError = false
+                showGroupedCoverNamePrompt = true
+            },
+            onFolder: {
+                guard !selectedProductIDs.isEmpty else { return }
+                InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+                showAddToFolderSheet = true
+            },
+            onSelectAllToggle: {
+                if allFilteredSelected {
+                    selectedProductIDs.removeAll()
+                } else {
+                    selectedProductIDs = Set(filteredProducts.map(\.id))
                 }
-                .buttonStyle(CompactPrimaryButtonStyle())
-            }
-
-            HStack(spacing: PSDesignSpacing.sm) {
-                HStack(spacing: PSDesignSpacing.xs) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(DS.ColorToken.accent)
-                    Text("\(selectedProductIDs.count) Selected")
-                        .font(DS.TypeScale.rowTitle.weight(.bold))
-                        .foregroundStyle(DS.ColorToken.label)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(selectedProductIDs.count) selected")
-
-                Spacer(minLength: 4)
-
-                Button("Folder") {
-                    guard !selectedProductIDs.isEmpty else { return }
-                    InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-                    showAddToFolderSheet = true
-                }
-                .font(DS.TypeScale.caption.weight(.semibold))
-                .foregroundStyle(selectedProductIDs.isEmpty ? DS.ColorToken.tertiaryLabel : DS.ColorToken.accent)
-                .disabled(selectedProductIDs.isEmpty)
-
-                Button(selectedProductIDs.count == filteredProducts.count && !filteredProducts.isEmpty ? "Clear" : "All") {
-                    if selectedProductIDs.count == filteredProducts.count && !filteredProducts.isEmpty {
-                        selectedProductIDs.removeAll()
-                    } else {
-                        selectedProductIDs = Set(filteredProducts.map(\.id))
-                    }
-                }
-                .font(DS.TypeScale.caption.weight(.semibold))
-                .foregroundStyle(DS.ColorToken.accent)
-
-                DSDropdownActionMenu(
-                    label: {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(selectedProductIDs.isEmpty ? DS.ColorToken.tertiaryLabel : DS.ColorToken.accent)
-                            .accessibilityLabel("Actions for selected photos")
-                    },
-                    items: bulkSelectionActionItems,
-                    isEnabled: !selectedProductIDs.isEmpty
-                ) { item in
-                    handleBulkSelectionAction(item)
-                }
-            }
-            .padding(.horizontal, PSDesignSpacing.md - 2)
-            .padding(.vertical, PSDesignSpacing.sm + 2)
-            .background(DS.ColorToken.backgroundSecondary, in: RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous)
-                    .stroke(DS.ColorToken.separator, lineWidth: 1)
-            )
-        }
+            },
+            onBulkMenuAction: handleBulkSelectionAction
+        )
     }
 
     private var groupedCoverSelectionEnabled: Bool {
@@ -627,28 +586,31 @@ struct QueueView: View {
 
     private var bulkSelectionActionItems: [DSDropdownActionItem] {
         var items: [DSDropdownActionItem] = [
-            .action("share", "Share…", systemImage: "square.and.arrow.up", isDisabled: selectedProductIDs.isEmpty),
-            .action("add-folder", "Add to folder…", systemImage: "folder.badge.plus", isDisabled: selectedProductIDs.isEmpty),
+            .header("PRODUCTIVITY"),
             .action("enhance", "Enhance", systemImage: "sparkles", isDisabled: selectedProductIDs.isEmpty),
-            .action("match-look", "Sync Look…", systemImage: "paintbrush.pointed", isDisabled: selectedProductIDs.count < 2),
-            .action("reset", "Reset", systemImage: "arrow.counterclockwise", isDisabled: selectedProductIDs.isEmpty),
+            .action("match-look", "Apply Look…", systemImage: "paintbrush.pointed", isDisabled: selectedProductIDs.count < 2),
+            .action("add-folder", "Add to folder…", systemImage: "folder.badge.plus", isDisabled: selectedProductIDs.isEmpty),
+            .header("OUTPUT"),
+            .action("share", "Export…", systemImage: "square.and.arrow.up", isDisabled: selectedProductIDs.isEmpty),
         ]
         if session.brandMarkEnabled {
-            items.append(.divider("bulk-brand-mark-divider"))
-            items.append(.action(
-                "hide-brand-mark",
-                "Hide Brand Mark",
-                systemImage: "seal.slash",
-                isDisabled: selectedProductIDs.isEmpty
-            ))
+            items.append(.header("BRAND KIT"))
             items.append(.action(
                 "show-brand-mark",
                 "Show Brand Mark",
                 systemImage: "seal",
                 isDisabled: selectedProductIDs.isEmpty
             ))
+            items.append(.action(
+                "hide-brand-mark",
+                "Hide Brand Mark",
+                systemImage: "seal.slash",
+                isDisabled: selectedProductIDs.isEmpty
+            ))
         }
-        items.append(.divider("bulk-divider"))
+        items.append(.header("RESET / DESTRUCTIVE"))
+        items.append(.action("reset", "Reset", systemImage: "arrow.counterclockwise", isDisabled: selectedProductIDs.isEmpty))
+        items.append(.divider("bulk-destructive-divider"))
         items.append(.action("delete", "Delete", systemImage: "trash", isDestructive: true, isDisabled: selectedProductIDs.isEmpty))
         return items
     }
@@ -860,15 +822,18 @@ struct QueueView: View {
 
     private func queueRowActionItems(for product: CapturedProduct) -> [DSDropdownActionItem] {
         var items: [DSDropdownActionItem] = [
+            .header("OPEN / EDIT"),
             .action("preview", "Preview"),
             .action("rename", "Edit Name"),
-            .action("share", "Share…", systemImage: "square.and.arrow.up"),
-            .action("defringe", "Fix edges (de-fringe)"),
-            .divider("row-enhance-divider"),
+            .action("replace", "Replace"),
+            .header("QUICK PROCESSING"),
             .action("standard-clean", "Standard Clean"),
+            .action("defringe", "Fix edges (de-fringe)"),
+            .header("OUTPUT"),
+            .action("share", "Export…", systemImage: "square.and.arrow.up"),
         ]
         if session.brandMarkEnabled {
-            items.append(.divider("row-brand-mark-divider"))
+            items.append(.header("BRAND KIT"))
             items.append(.action(
                 "hide-brand-mark",
                 "Hide Brand Mark",
@@ -876,8 +841,7 @@ struct QueueView: View {
                 isSelected: product.suppressBrandMark
             ))
         }
-        items.append(.divider("row-tail-divider"))
-        items.append(.action("replace", "Replace"))
+        items.append(.header("DESTRUCTIVE"))
         items.append(.action("delete", "Delete", systemImage: "trash", isDestructive: true))
         return items
     }
@@ -1041,9 +1005,9 @@ struct QueueView: View {
     private var primaryExportButtonTitle: String {
         let n = bulkShareTargets.count
         if isSelectionMode, !selectedProductIDs.isEmpty {
-            return "Share selected (\(n))…"
+            return "Export Selected (\(n))"
         }
-        return "Share all (\(n))…"
+        return "Export Queue"
     }
 
     private func share(products: [CapturedProduct], includeCSV: Bool, format: ExportImageFormat) {
@@ -1261,7 +1225,8 @@ struct QueueView: View {
         }
         switch queueFilter {
         case .all: return "No products queued yet"
-        case .needsAttention: return "Nothing needs attention"
+        case .ready: return "No ready images"
+        case .attention: return "Nothing needs attention"
         case .edited: return "No edited images"
         }
     }
@@ -1273,8 +1238,10 @@ struct QueueView: View {
         switch queueFilter {
         case .all:
             return "Import from Photos or Files, or capture new photos. New items appear at the top of this queue."
-        case .needsAttention:
-            return "Quality flags will appear here when the Capture Quality Assistant is enabled."
+        case .ready:
+            return "Images without quality attention issues appear here."
+        case .attention:
+            return "Images with quality attention issues will appear here when flags are available."
         case .edited:
             return "Images you edit in preview will appear in this filter."
         }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Batch Sync Look: preview source before/after, then apply look to other selected items.
+/// Batch Apply Look: preview source before/after, then apply look to other selected items.
 struct SyncLookSheet: View {
     @EnvironmentObject private var session: CaptureSessionStore
     @Environment(\.dismiss) private var dismiss
@@ -42,14 +42,14 @@ struct SyncLookSheet: View {
                 .padding(.vertical, 16)
             }
             .background(DS.ColorToken.backgroundSecondary)
-            .navigationTitle("Sync Look")
+            .navigationTitle("Apply Look")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Sync Look") {
+                    Button("Apply Look") {
                         onSync()
                         dismiss()
                     }

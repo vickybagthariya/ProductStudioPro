@@ -223,11 +223,12 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - Queue dashboard filters (Phase 1)
+// MARK: - Queue dashboard filters
 
 enum QueueDashboardFilter: String, CaseIterable, Identifiable {
     case all
-    case needsAttention
+    case ready
+    case attention
     case edited
 
     var id: String { rawValue }
@@ -235,7 +236,8 @@ enum QueueDashboardFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "All"
-        case .needsAttention: return "Needs Attention"
+        case .ready: return "Ready"
+        case .attention: return "Attention"
         case .edited: return "Edited"
         }
     }
@@ -244,7 +246,9 @@ enum QueueDashboardFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all:
             return products
-        case .needsAttention:
+        case .ready:
+            return products.filter { !$0.needsQueueAttention }
+        case .attention:
             return products.filter(\.needsQueueAttention)
         case .edited:
             return products.filter(\.hasQueueManualEdits)
@@ -252,11 +256,12 @@ enum QueueDashboardFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// Future Capture Quality Assistant issues — detection not implemented yet.
+/// Queue quality attention issues — detection not implemented yet.
 enum QueueQualityIssue: String, CaseIterable, Identifiable {
     case incompleteBackgroundRemoval
     case blur
     case poorLighting
+    case poorImageQuality
     case croppedProduct
     case edgeArtifacts
 
@@ -269,6 +274,7 @@ enum QueueQualityIssue: String, CaseIterable, Identifiable {
         case .incompleteBackgroundRemoval: return "Background not fully removed"
         case .blur: return "Blur detected"
         case .poorLighting: return "Poor lighting"
+        case .poorImageQuality: return "Poor image quality"
         case .croppedProduct: return "Product may be cropped"
         case .edgeArtifacts: return "Edge artifacts"
         }
@@ -276,7 +282,7 @@ enum QueueQualityIssue: String, CaseIterable, Identifiable {
 }
 
 extension CapturedProduct {
-    /// Reserved for Capture Quality Assistant — returns empty until detection ships.
+    /// Reserved for queue quality attention — returns empty until detection ships.
     var queueQualityIssues: [QueueQualityIssue] {
         []
     }
@@ -322,6 +328,86 @@ struct QueueDashboardFilterRow: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+// MARK: - Bulk selection bar
+
+/// Selection summary + Grouped Cover + Folder / All / bulk menu (UI only).
+struct QueueBulkSelectionBar: View {
+    let selectedCount: Int
+    let showGroupedCover: Bool
+    let selectAllTitle: String
+    let folderEnabled: Bool
+    let bulkMenuItems: [DSDropdownActionItem]
+    let bulkMenuEnabled: Bool
+    var onGroupedCover: () -> Void
+    var onFolder: () -> Void
+    var onSelectAllToggle: () -> Void
+    var onBulkMenuAction: (DSDropdownActionItem) -> Void
+
+    var body: some View {
+        VStack(spacing: PSDesignSpacing.sm) {
+            if showGroupedCover {
+                Button(action: onGroupedCover) {
+                    Label("Grouped Cover", systemImage: "square.grid.2x2")
+                        .labelStyle(.titleAndIcon)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CompactPrimaryButtonStyle())
+            }
+
+            HStack(spacing: PSDesignSpacing.sm) {
+                HStack(spacing: PSDesignSpacing.sm) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(PSDesignColors.primaryAccent)
+                        .symbolRenderingMode(.hierarchical)
+                    Text("\(selectedCount) Selected")
+                        .font(PSDesignTypography.headline.weight(.bold))
+                        .foregroundStyle(PSDesignColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(selectedCount) selected")
+
+                Spacer(minLength: 4)
+
+                Button("Folder", action: onFolder)
+                    .font(PSDesignTypography.caption.weight(.semibold))
+                    .foregroundStyle(folderEnabled ? PSDesignColors.primaryAccent : PSDesignColors.textTertiary)
+                    .disabled(!folderEnabled)
+
+                Button(selectAllTitle, action: onSelectAllToggle)
+                    .font(PSDesignTypography.caption.weight(.semibold))
+                    .foregroundStyle(PSDesignColors.primaryAccent)
+
+                DSDropdownActionMenu(
+                    label: {
+                        Image(systemName: "ellipsis.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(bulkMenuEnabled ? PSDesignColors.primaryAccent : PSDesignColors.textTertiary)
+                            .accessibilityLabel("Actions for selected photos")
+                    },
+                    items: bulkMenuItems,
+                    isEnabled: bulkMenuEnabled
+                ) { item in
+                    onBulkMenuAction(item)
+                }
+            }
+            .padding(.horizontal, PSDesignSpacing.md - 2)
+            .padding(.vertical, PSDesignSpacing.sm + 2)
+            .background(
+                PSDesignColors.elevatedBackground,
+                in: RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: PSDesignRadius.sm, style: .continuous)
+                    .stroke(PSDesignColors.divider, lineWidth: 1)
+            )
+        }
     }
 }
 
@@ -419,9 +505,9 @@ struct CatalogSessionManagerSheet: View {
                         }
                     }
                 } header: {
-                    Text("Queues / Sessions")
+                    Text("Switch session")
                 } footer: {
-                    Text("Each session is a separate photo queue (soft limit \(CaptureSessionStore.CatalogSessionLimits.softQueueCap) each). Capture and import always go into the active session.")
+                    Text("Tap a session to switch. Each session is a separate photo queue (soft limit \(CaptureSessionStore.CatalogSessionLimits.softQueueCap) each). Capture and import always go into the active session.")
                 }
 
                 Section {
@@ -435,9 +521,11 @@ struct CatalogSessionManagerSheet: View {
                         }
                         .disabled(session.activeImport != nil)
                     }
+                } header: {
+                    Text("Create session")
                 }
             }
-            .navigationTitle("Sessions")
+            .navigationTitle("Manage Sessions")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
