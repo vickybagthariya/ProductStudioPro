@@ -191,6 +191,9 @@ struct ImagePreviewPagerView: View {
     @State private var showReplaceCamera = false
     @State private var markupConflict: PreviewMarkupConflict?
     @State private var showGroupedCoverEditor = false
+    #if DEBUG
+    @State private var showPipelineCompare = false
+    #endif
     @State private var groupedCoverNameText = ""
     @State private var groupedCoverExistingLayout: CompositeBundleLayout?
     @State private var alignedBeforeCompareImage: UIImage?
@@ -665,6 +668,14 @@ struct ImagePreviewPagerView: View {
         if currentProduct?.upscaled == true {
             items.append(.action("descale", "Remove upscale (descale)"))
         }
+        #if DEBUG
+        items.append(.divider("overflow-debug-divider"))
+        items.append(.action(
+            "pipeline-compare",
+            "Pipeline Compare",
+            systemImage: "wrench.and.screwdriver"
+        ))
+        #endif
         return items
     }
 
@@ -681,6 +692,10 @@ struct ImagePreviewPagerView: View {
             if let p = currentProduct {
                 session.revertLegacyUpscale(to: p) { resetPanelFromCurrentProduct() }
             }
+        #if DEBUG
+        case "pipeline-compare":
+            showPipelineCompare = true
+        #endif
         default: break
         }
     }
@@ -1028,6 +1043,13 @@ struct ImagePreviewPagerView: View {
                     .presentationBackgroundInteraction(.enabled(upThrough: .large))
                 }
             }
+            #if DEBUG
+            .sheet(isPresented: $showPipelineCompare) {
+                if let product = currentProduct {
+                    PipelineCompareView(product: product)
+                }
+            }
+            #endif
             .alert("Delete this image?", isPresented: $showDeleteConfirmAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) { deleteCurrentAndDismissIfNeeded() }

@@ -39,8 +39,15 @@ struct QueueView: View {
     @State private var groupedCoverExistingLayout: CompositeBundleLayout?
     @State private var groupedCoverNamePromptError = false
     @State private var showSessionManager = false
+    @State private var showAddToSessionSheet = false
+    @State private var showPasteOrURLSheet = false
+    @State private var pasteURLText = ""
+    @State private var showImportError = false
+    @State private var importErrorMessage = ""
     @State private var showAddToFolderSheet = false
     @State private var folderMoveToast: String?
+    /// Set when an export targets the current selection; cleared after share completes or cancels.
+    @State private var exitSelectionAfterSuccessfulExport = false
 
     var body: some View {
         queueNavigationStack
@@ -52,7 +59,10 @@ struct QueueView: View {
     private var queueNavigationStack: some View {
         queueMainColumn
         .navigationBarHidden(true)
-        .onChange(of: selectedPhotoItems) { _, newItems in importSelectedPhotos(newItems) }
+        .onChange(of: selectedPhotoItems) { _, newItems in
+            if !newItems.isEmpty { showAddToSessionSheet = false }
+            importSelectedPhotos(newItems)
+        }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
             importFiles(result)
         }
@@ -83,7 +93,7 @@ struct QueueView: View {
         } message: { Text("This removes the selected images from the queue only.") }
         .alert("Reset selected images?", isPresented: $showBulkResetConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset") {
+            Button("Reset Selected") {
                 previewIndex = nil
                 session.resetProductsToOriginal(ids: selectedProductIDs)
             }
@@ -102,11 +112,23 @@ struct QueueView: View {
                 .environmentObject(session)
             }
         }
-        .sheet(item: $sharePayload, onDismiss: clearExportUIState) { payload in
+        .sheet(item: $sharePayload, onDismiss: {
+            clearExportUIState()
+            // Dismiss without ActivityView completion (e.g. swipe-away) preserves selection.
+            exitSelectionAfterSuccessfulExport = false
+        }) { payload in
             ActivityView(activityItems: payload.items) { _, completed, _, _ in
                 Task { @MainActor in
+                    let shouldExitSelection = completed && exitSelectionAfterSuccessfulExport
                     sharePayload = nil
                     clearExportUIState()
+                    if shouldExitSelection {
+                        withAnimation(PSDesignMotion.springSoft) {
+                            selectedProductIDs.removeAll()
+                            isSelectionMode = false
+                        }
+                    }
+                    exitSelectionAfterSuccessfulExport = false
                     if completed, !payload.productIDsForRemovalPrompt.isEmpty {
                         postShareRemovalCandidates = payload.productIDsForRemovalPrompt
                         showPostShareRemoveConfirm = true
@@ -220,7 +242,10 @@ struct QueueView: View {
                     if let p = shareDialogProducts { shareCSVOnly(products: p) }
                     shareDialogProducts = nil
                 },
-                onCancel: { shareDialogProducts = nil }
+                onCancel: {
+                    shareDialogProducts = nil
+                    exitSelectionAfterSuccessfulExport = false
+                }
             )
         }
         .alert("Include CSV manifest?", isPresented: pendingCSVAskPresented) {
@@ -234,7 +259,10 @@ struct QueueView: View {
                 share(products: ask.products, includeCSV: false, format: ask.format)
                 pendingCSVFormatAsk = nil
             }
-            Button("Cancel", role: .cancel) { pendingCSVFormatAsk = nil }
+            Button("Cancel", role: .cancel) {
+                pendingCSVFormatAsk = nil
+                exitSelectionAfterSuccessfulExport = false
+            }
         } message: {
             Text(pendingCSVFormatAsk?.format == .png
                  ? "PNG exports keep transparency when backgrounds were removed. Add a CSV inventory list?"
@@ -243,6 +271,55 @@ struct QueueView: View {
         .sheet(isPresented: $showSessionManager) {
             CatalogSessionManagerSheet()
                 .environmentObject(session)
+        }
+        .sheet(isPresented: $showAddToSessionSheet) {
+            QueueAddToSessionSheet(
+                sessionDisplayName: session.activeCatalogSessionName,
+                isImporting: session.activeImport != nil,
+                selectedPhotoItems: $selectedPhotoItems,
+                onImportFiles: {
+                    showFileImporter = true
+                },
+                onImportURL: {
+                    pasteURLText = ClipboardURLImageImport.readClipboard().suggestedURLText
+                    showPasteOrURLSheet = true
+                },
+                onImportClipboard: {
+                    HomeImportSupport.importFromClipboard(
+                        session: session,
+                        onError: presentQueueImportError,
+                        onNavigateToQueue: {}
+                    )
+                },
+                onSingleCapture: {
+                    session.navigationPath.append(AppRoute.singleCapture)
+                },
+                onBatchCapture: {
+                    session.navigationPath.append(AppRoute.batchCapture)
+                },
+                onDismiss: { showAddToSessionSheet = false }
+            )
+        }
+        .sheet(isPresented: $showPasteOrURLSheet) {
+            PasteOrURLImportSheet(
+                urlText: $pasteURLText,
+                onImport: {
+                    if HomeImportSupport.importFromPasteSheetURL(
+                        pasteURLText,
+                        session: session,
+                        onError: presentQueueImportError,
+                        onNavigateToQueue: {}
+                    ) {
+                        showPasteOrURLSheet = false
+                    }
+                },
+                onCancel: { showPasteOrURLSheet = false }
+            )
+        }
+        .alert("Couldn’t Import", isPresented: $showImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importErrorMessage)
         }
         .sheet(isPresented: $showAddToFolderSheet) {
             AddToSessionFolderSheet(productIDs: selectedProductIDs) { message in
@@ -268,7 +345,9 @@ struct QueueView: View {
             onBack: { session.popNavigation() },
             onHome: { session.goHome() },
             layout: .listBody,
-            headerAccessory: { queueHeaderAccessory }
+            usesAccentSubtitleChip: false,
+            headerAccessory: { queueHeaderAccessory },
+            titleTrailingAccessory: { queueTitleAddButton }
         ) {
             QueueCollapsibleSearchBar(
                 text: $searchText,
@@ -276,8 +355,6 @@ struct QueueView: View {
                 focusBinding: $isSearchFieldFocused
             )
             .animation(PSDesignMotion.springSoft, value: isSearchPresented)
-
-            compactActionButtons
 
             QueueDashboardFilterRow(selectedFilter: $queueFilter)
                 .padding(.bottom, PSDesignSpacing.xs)
@@ -305,7 +382,7 @@ struct QueueView: View {
                         }
                     }
                 }
-                .listRowSpacing(4)
+                .listRowSpacing(2)
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
             } else {
@@ -314,21 +391,22 @@ struct QueueView: View {
                         queueRowWithActions(product)
                     }
                 }
-                .listRowSpacing(4)
+                .listRowSpacing(2)
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
             }
 
-            bulkActionBar
-                .opacity(isSelectionMode ? 1 : 0)
-                .frame(minHeight: 44)
-                .allowsHitTesting(isSelectionMode)
-                .accessibilityHidden(!isSelectionMode)
+            if isSelectionMode {
+                bulkActionBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
 
             exportButtons
         } footer: {
             EmptyView()
         }
+        .animation(PSDesignMotion.springSoft, value: isSelectionMode)
+        .animation(PSDesignMotion.springSoft, value: groupedCoverSelectionEnabled)
         .overlay(alignment: .top) {
             if let folderMoveToast {
                 Text(folderMoveToast)
@@ -383,11 +461,13 @@ struct QueueView: View {
     private func openShareDialog(for products: [CapturedProduct]) {
         guard !products.isEmpty else { return }
         InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+        exitSelectionAfterSuccessfulExport = isSelectionMode && !selectedProductIDs.isEmpty
+            && products.allSatisfy { selectedProductIDs.contains($0.id) }
         shareDialogProducts = products
     }
 
     private var queueHeaderTitle: String {
-        "\(session.activeCatalogSessionName) Queue"
+        QueueDisplayNaming.queueTitle(forSessionName: session.activeCatalogSessionName)
     }
 
     private var queueHeaderSubtitle: String {
@@ -395,9 +475,26 @@ struct QueueView: View {
         let visible = filteredProducts.count
         let imageLabel = visible == 1 ? "image" : "images"
         if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || queueFilter != .all {
-            return "\(visible) of \(total) \(imageLabel). Long-press to multi-select."
+            return "\(visible) of \(total) \(imageLabel) · Long-press to multi-select"
         }
-        return "\(total) \(imageLabel). Long-press to multi-select."
+        return "\(total) \(imageLabel) · Long-press to multi-select"
+    }
+
+    private var queueTitleAddButton: some View {
+        Button {
+            InteractionHaptics.tap(vibrate: session.vibrateEnabled)
+            showAddToSessionSheet = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(DS.ColorToken.accent)
+                .frame(width: 36, height: 36)
+                .background(DS.ColorToken.backgroundTertiary, in: Circle())
+                .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
+        }
+        .buttonStyle(.plainPressable)
+        .accessibilityLabel("Add to \(session.activeCatalogSessionName)")
+        .accessibilityHint("Capture or import photos into the current queue")
     }
 
     private var queueHeaderAccessory: some View {
@@ -438,8 +535,8 @@ struct QueueView: View {
                     .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
             }
             .buttonStyle(.plainPressable)
-            .accessibilityLabel("Switch or manage sessions")
-            .accessibilityHint("Create, switch, rename, or delete queue sessions")
+            .accessibilityLabel("Manage sessions")
+            .accessibilityHint("Switch, create, rename, or delete queue sessions")
 
             DSDropdownActionMenu(
                 label: {
@@ -450,45 +547,28 @@ struct QueueView: View {
                         .background(DS.ColorToken.backgroundTertiary, in: Circle())
                         .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
                 },
-                items: QueueSortOption.allCases.map { option in
-                    .action(option.rawValue, option.rawValue, isSelected: sortOption == option)
-                },
+                items: queueSortOrganizeMenuItems,
                 isEnabled: !session.products.isEmpty
             ) { item in
-                if let option = QueueSortOption.allCases.first(where: { $0.rawValue == item.id }) {
-                    sortOption = option
-                }
+                handleQueueSortOrganizeAction(item)
             }
-            .accessibilityLabel("Sort queue")
+            .accessibilityLabel("Sort and organize queue")
 
             Button {
-                groupByUPC.toggle()
-            } label: {
-                Image(systemName: groupByUPC ? "square.grid.3x1.folder.fill.badge.plus" : "square.grid.3x1.folder.badge.plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(session.products.isEmpty ? DS.ColorToken.tertiaryLabel : (groupByUPC ? DS.ColorToken.accent : DS.ColorToken.secondaryLabel))
-                    .frame(width: 34, height: 34)
-                    .background(DS.ColorToken.backgroundTertiary, in: Circle())
-                    .overlay(Circle().stroke(DS.ColorToken.separator, lineWidth: 1))
-            }
-            .buttonStyle(.plainPressable)
-            .disabled(session.products.isEmpty)
-            .accessibilityLabel(groupByUPC ? "Ungroup queue" : "Group by UPC")
-            .accessibilityHint("Groups multi-angle photos that share the same UPC")
-
-            Button {
-                if isSelectionMode {
-                    isSelectionMode = false
-                    selectedProductIDs.removeAll()
-                } else {
-                    isSelectionMode = true
+                withAnimation(PSDesignMotion.springSoft) {
+                    if isSelectionMode {
+                        isSelectionMode = false
+                        selectedProductIDs.removeAll()
+                    } else {
+                        isSelectionMode = true
+                    }
                 }
             } label: {
                 Text(isSelectionMode ? "Done" : "Select")
                     .font(DS.TypeScale.caption.weight(.semibold))
                     .foregroundStyle(session.products.isEmpty ? DS.ColorToken.tertiaryLabel : DS.ColorToken.accent)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
                     .background(DS.ColorToken.backgroundTertiary, in: Capsule())
                     .overlay(Capsule().stroke(DS.ColorToken.separator, lineWidth: 1))
             }
@@ -499,50 +579,37 @@ struct QueueView: View {
         }
     }
 
-    private var compactActionButtons: some View {
-        let isImportingPhotos = session.activeImport != nil
-        return HStack(spacing: PSDesignSpacing.sm) {
-            PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 100, matching: .images) {
-                Label(isImportingPhotos ? "Importing" : "Upload", systemImage: "photo.on.rectangle")
-                    .labelStyle(.titleAndIcon)
-                    .font(PSDesignTypography.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, PSDesignSpacing.sm)
-            }
-            .buttonStyle(CompactSecondaryButtonStyle())
-            .disabled(isImportingPhotos)
+    private var queueSortOrganizeMenuItems: [DSDropdownActionItem] {
+        var items: [DSDropdownActionItem] = [.header("SORT")]
+        items.append(contentsOf: QueueSortOption.allCases.map { option in
+            .action(
+                "sort-\(option.rawValue)",
+                option.rawValue,
+                systemImage: "arrow.up.arrow.down",
+                isDisabled: session.products.isEmpty,
+                isSelected: sortOption == option
+            )
+        })
+        items.append(.header("ORGANIZE"))
+        items.append(.action(
+            "group-product",
+            "Group by Product",
+            systemImage: "square.grid.3x1.folder.badge.plus",
+            isDisabled: session.products.isEmpty,
+            isSelected: groupByUPC
+        ))
+        return items
+    }
 
-            Button { showFileImporter = true } label: {
-                Label("Apps", systemImage: "folder")
-                    .labelStyle(.titleAndIcon)
-                    .font(PSDesignTypography.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, PSDesignSpacing.sm)
+    private func handleQueueSortOrganizeAction(_ item: DSDropdownActionItem) {
+        switch item.id {
+        case "group-product":
+            groupByUPC.toggle()
+        default:
+            if item.id.hasPrefix("sort-"),
+               let option = QueueSortOption.allCases.first(where: { "sort-\($0.rawValue)" == item.id }) {
+                sortOption = option
             }
-            .buttonStyle(CompactSecondaryButtonStyle())
-            .disabled(isImportingPhotos)
-
-            Button {
-                session.navigationPath.append(AppRoute.singleCapture)
-            } label: {
-                Label("Single", systemImage: "camera")
-                    .labelStyle(.titleAndIcon)
-                    .font(PSDesignTypography.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, PSDesignSpacing.sm)
-            }
-            .buttonStyle(CompactSecondaryButtonStyle())
-
-            Button {
-                session.navigationPath.append(AppRoute.batchCapture)
-            } label: {
-                Label("Batch", systemImage: "square.stack")
-                    .labelStyle(.titleAndIcon)
-                    .font(PSDesignTypography.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, PSDesignSpacing.sm)
-            }
-            .buttonStyle(CompactSecondaryButtonStyle())
         }
     }
 
@@ -609,7 +676,7 @@ struct QueueView: View {
             ))
         }
         items.append(.header("RESET / DESTRUCTIVE"))
-        items.append(.action("reset", "Reset", systemImage: "arrow.counterclockwise", isDisabled: selectedProductIDs.isEmpty))
+        items.append(.action("reset", "Reset Selected", systemImage: "arrow.counterclockwise", isDisabled: selectedProductIDs.isEmpty))
         items.append(.divider("bulk-destructive-divider"))
         items.append(.action("delete", "Delete", systemImage: "trash", isDestructive: true, isDisabled: selectedProductIDs.isEmpty))
         return items
@@ -732,8 +799,10 @@ struct QueueView: View {
 
     private func enterSelectionMode(selecting product: CapturedProduct) {
         InteractionHaptics.selection(vibrate: session.vibrateEnabled)
-        if !isSelectionMode { isSelectionMode = true }
-        selectedProductIDs.insert(product.id)
+        withAnimation(PSDesignMotion.springSoft) {
+            if !isSelectionMode { isSelectionMode = true }
+            selectedProductIDs.insert(product.id)
+        }
     }
 
     private func queueRow(_ product: CapturedProduct) -> some View {
@@ -891,7 +960,7 @@ struct QueueView: View {
                         }
                     })
             )
-            .listRowInsets(.init(top: 2, leading: AppLayout.listRowInsetH, bottom: 2, trailing: AppLayout.listRowInsetH))
+            .listRowInsets(.init(top: 1, leading: AppLayout.listRowInsetH, bottom: 1, trailing: AppLayout.listRowInsetH))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
             .modifier(QueueTrailingSwipeActions(
@@ -992,11 +1061,12 @@ struct QueueView: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(session.products.isEmpty || isExporting)
                 .opacity(session.products.isEmpty || isExporting ? DS.Motion.disabledOpacity : 1)
+                .layoutPriority(1)
 
                 Button("Clear") { showClearConfirm = true }
                     .buttonStyle(DangerButtonStyle())
                     .disabled(session.products.isEmpty || isExporting)
-                    .frame(maxWidth: 120)
+                    .frame(maxWidth: 118)
             }
         }
         .frame(minHeight: 47)
@@ -1007,7 +1077,7 @@ struct QueueView: View {
         if isSelectionMode, !selectedProductIDs.isEmpty {
             return "Export Selected (\(n))"
         }
-        return "Export Queue"
+        return "Export Queue (\(n))"
     }
 
     private func share(products: [CapturedProduct], includeCSV: Bool, format: ExportImageFormat) {
@@ -1030,7 +1100,10 @@ struct QueueView: View {
                     metadataSnapshot: metadataSnapshot
                 )
             }.value
-            guard !urls.isEmpty else { return }
+            guard !urls.isEmpty else {
+                await MainActor.run { exitSelectionAfterSuccessfulExport = false }
+                return
+            }
             await MainActor.run {
                 session.metadataManager.recordExport(
                     productIDs: ids,
@@ -1055,7 +1128,10 @@ struct QueueView: View {
                     quality: quality
                 )
             }.value
-            guard !urls.isEmpty else { return }
+            guard !urls.isEmpty else {
+                await MainActor.run { exitSelectionAfterSuccessfulExport = false }
+                return
+            }
             await MainActor.run {
                 sharePayload = SharePayload(items: urls, productIDsForRemovalPrompt: ids)
             }
@@ -1078,7 +1154,10 @@ struct QueueView: View {
                     metadataSnapshot: metadataSnapshot
                 )
             }.value
-            guard let csv else { return }
+            guard let csv else {
+                await MainActor.run { exitSelectionAfterSuccessfulExport = false }
+                return
+            }
             await MainActor.run {
                 session.metadataManager.recordExport(
                     productIDs: ids,
@@ -1110,7 +1189,10 @@ struct QueueView: View {
             let url = await Task.detached(priority: .userInitiated) {
                 ExportManager.zipExportURL(for: products, context: context)
             }.value
-            guard let url else { return }
+            guard let url else {
+                await MainActor.run { exitSelectionAfterSuccessfulExport = false }
+                return
+            }
             await MainActor.run {
                 session.metadataManager.recordExport(
                     productIDs: ids,
@@ -1126,6 +1208,11 @@ struct QueueView: View {
     private func startReplace(_ product: CapturedProduct) {
         replacingProduct = product
         showReplaceCamera = true
+    }
+
+    private func presentQueueImportError(_ message: String) {
+        importErrorMessage = message
+        showImportError = true
     }
 
     private func importFiles(_ result: Result<[URL], Error>) {
@@ -1321,7 +1408,8 @@ enum PreviewShareCSVAsk: Equatable {
 private enum QueueSortOption: String, CaseIterable, Identifiable {
     case newestFirst = "Newest First"
     case oldestFirst = "Oldest First"
-    case nameAToZ = "Name A-Z"
+    case nameAToZ = "Name A–Z"
+    case nameZToA = "Name Z–A"
 
     var id: String { rawValue }
 
@@ -1333,6 +1421,8 @@ private enum QueueSortOption: String, CaseIterable, Identifiable {
             return products.sorted { $0.capturedAt < $1.capturedAt }
         case .nameAToZ:
             return products.sorted { $0.filename.localizedCaseInsensitiveCompare($1.filename) == .orderedAscending }
+        case .nameZToA:
+            return products.sorted { $0.filename.localizedCaseInsensitiveCompare($1.filename) == .orderedDescending }
         }
     }
 }

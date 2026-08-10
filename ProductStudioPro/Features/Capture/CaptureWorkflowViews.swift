@@ -275,26 +275,3 @@ struct CaptureWorkflowSelectionSection: View {
     }
 }
 
-// MARK: - Multi-angle setup (from Home shortcut)
-
-struct CaptureMultiAngleSetupSection: View {
-    @Binding var selectedCaptureMode: CaptureMode?
-    let onContinue: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: PSDesignSpacing.md) {
-            Text("Multi-Angle Capture")
-                .psHeadline()
-
-            CaptureModeSelectionSection(
-                prompt: "How are you photographing today?",
-                selectedMode: $selectedCaptureMode,
-                singleTitle: "Single Product",
-                singleDetail: "All angles for one item",
-                batchTitle: "Batch Products",
-                batchDetail: "Multi-angle sets across many items",
-                onModeSelected: { _ in onContinue() }
-            )
-        }
-    }
-}

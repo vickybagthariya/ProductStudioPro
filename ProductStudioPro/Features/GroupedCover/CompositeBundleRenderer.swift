@@ -120,4 +120,66 @@ enum CompositeBundleRenderer {
         )
         return rect.size
     }
+
+    #if DEBUG
+    /// DEBUG diagnostics: one subject on white via the real `renderSync` + `exportCutout` path.
+    static func debugRenderSingleProductOnWhite(
+        product: CapturedProduct,
+        canvasWidth: Int,
+        canvasHeight: Int,
+        fillRatio: Double,
+        backgroundFillSpec: BackgroundFillSpec = .catalogWhite,
+        primaryColor: UIColor = .white,
+        secondaryColor: UIColor = UIColor(white: 0.94, alpha: 1)
+    ) throws -> (cutout: UIImage, composite: UIImage) {
+        let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
+        let fitW = CGFloat(canvasWidth) * CGFloat(max(0.30, min(fillRatio, 1.0)))
+        let fitH = CGFloat(canvasHeight) * CGFloat(max(0.30, min(fillRatio, 1.0)))
+        let provisionalDraw = CGSize(width: fitW, height: fitH)
+        guard let cutout = CompositeBundleCutoutLoader.exportCutout(for: product, drawSize: provisionalDraw) else {
+            throw CompositeBundleRenderError.cutoutUnavailable(product.id)
+        }
+        let targetFrame = CGRect(
+            x: (canvasSize.width - fitW) / 2,
+            y: (canvasSize.height - fitH) / 2,
+            width: fitW,
+            height: fitH
+        )
+        let transform = CompositeLayoutEngine.fitTransform(
+            cutoutSize: cutout.size,
+            targetFrame: targetFrame,
+            canvasSize: canvasSize,
+            fillRatio: 1.0
+        )
+        let aspect = CompositeLayerItem.aspect(from: cutout.size)
+        let layer = CompositeLayerItem(
+            sourceProductID: product.id,
+            gridIndex: 0,
+            zIndex: 0,
+            transform: transform,
+            cutoutAspectWidth: aspect.width,
+            cutoutAspectHeight: aspect.height
+        )
+        let layout = CompositeBundleLayout(
+            matrix: CompositeLayoutMatrix(rows: 1, columns: 1),
+            layers: [layer],
+            isFreeformMode: true,
+            sourceProductIDs: [product.id],
+            gridGapPoints: 0,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight
+        )
+        let composite = try renderSync(
+            layout: layout,
+            productsByID: [product.id: product],
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight,
+            fillRatio: fillRatio,
+            backgroundFillSpec: backgroundFillSpec,
+            primaryColor: primaryColor,
+            secondaryColor: secondaryColor
+        )
+        return (cutout, composite)
+    }
+    #endif
 }

@@ -55,6 +55,10 @@
 		AA00001F0000000000000001 /* ProductPlacementEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00001F0000000000000002 /* ProductPlacementEngine.swift */; };
 		AA0000200000000000000001 /* ContactShadowRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000200000000000000002 /* ContactShadowRenderer.swift */; };
 		AA0000210000000000000001 /* ProductCompositeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000210000000000000002 /* ProductCompositeRenderer.swift */; };
+		AA0000F100000000000001 /* PipelineForensics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F100000000000002 /* PipelineForensics.swift */; };
+		AA0000F300000000000001 /* PipelineCompareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F300000000000002 /* PipelineCompareView.swift */; };
+		AA0000F500000000000001 /* ProcessedWriteForensics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F500000000000002 /* ProcessedWriteForensics.swift */; };
+		AA0000F600000000000001 /* ProcessedWriteForensicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F600000000000002 /* ProcessedWriteForensicsTests.swift */; };
 		AA0000220000000000000001 /* ImageBackgroundEditorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000220000000000000002 /* ImageBackgroundEditorViews.swift */; };
 		AA0000230000000000000001 /* BackgroundAssets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000230000000000000002 /* BackgroundAssets */; };
 		AA0000250000000000000001 /* ImageBackgroundFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000250000000000000002 /* ImageBackgroundFavoritesStore.swift */; };
@@ -178,6 +182,10 @@
 		AA00001F0000000000000002 /* ProductPlacementEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductPlacementEngine.swift; sourceTree = "<group>"; };
 		AA0000200000000000000002 /* ContactShadowRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactShadowRenderer.swift; sourceTree = "<group>"; };
 		AA0000210000000000000002 /* ProductCompositeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCompositeRenderer.swift; sourceTree = "<group>"; };
+		AA0000F100000000000002 /* PipelineForensics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineForensics.swift; sourceTree = "<group>"; };
+		AA0000F300000000000002 /* PipelineCompareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineCompareView.swift; sourceTree = "<group>"; };
+		AA0000F500000000000002 /* ProcessedWriteForensics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessedWriteForensics.swift; sourceTree = "<group>"; };
+		AA0000F600000000000002 /* ProcessedWriteForensicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessedWriteForensicsTests.swift; sourceTree = "<group>"; };
 		AA0000220000000000000002 /* ImageBackgroundEditorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageBackgroundEditorViews.swift; sourceTree = "<group>"; };
 		AA0000230000000000000002 /* BackgroundAssets */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = BackgroundAssets; sourceTree = "<group>"; };
 		AA0000250000000000000002 /* ImageBackgroundFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageBackgroundFavoritesStore.swift; sourceTree = "<group>"; };
@@ -330,8 +338,18 @@
 				AA0000A700000000000002 /* Export */,
 				AA0000330000000000000002 /* Persistence */,
 				AA0000340000000000000002 /* Utilities */,
+				AA0000F000000000000002 /* Debug */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		AA0000F000000000000002 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000F100000000000002 /* PipelineForensics.swift */,
+				AA0000F500000000000002 /* ProcessedWriteForensics.swift */,
+			);
+			path = Debug;
 			sourceTree = "<group>";
 		};
 		AA0000B800000000000002 /* Metadata */ = {
@@ -521,6 +539,7 @@
 				AA0000830000000000000002 /* CutoutEdgeBrushSheet.swift */,
 				AA0000840000000000000002 /* ToneAdjustSheet.swift */,
 				AA0000100000000000000002 /* PreviewPhotoInfoSheet.swift */,
+				AA0000F300000000000002 /* PipelineCompareView.swift */,
 				AA00000F0000000000000002 /* PreviewZoomGestures.swift */,
 				AA00000B0000000000000002 /* PhotosStyleFilterStrip.swift */,
 				AA00000E0000000000000002 /* StylePreviewThumbnailRenderer.swift */,
@@ -634,6 +653,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000710000000000000002 /* CatalogLogicTests.swift */,
+				AA0000F600000000000002 /* ProcessedWriteForensicsTests.swift */,
 			);
 			path = ProductStudioProTests;
 			sourceTree = "<group>";
@@ -765,6 +785,9 @@
 				5E6F2D3B5FF0491E99C0B640 /* Models.swift in Sources */,
 				WFP000010000000000000001 /* StudioPreset.swift in Sources */,
 				AA0000600000000000000001 /* ImageProcessor.swift in Sources */,
+				AA0000F100000000000001 /* PipelineForensics.swift in Sources */,
+				AA0000F500000000000001 /* ProcessedWriteForensics.swift in Sources */,
+				AA0000F300000000000001 /* PipelineCompareView.swift in Sources */,
 				AA0000610000000000000001 /* ImagePreviewPagerView.swift in Sources */,
 				AA0000620000000000000001 /* QueueSupportViews.swift in Sources */,
 				AA0000810000000000000001 /* SyncLookSheet.swift in Sources */,
@@ -855,6 +878,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA0000710000000000000001 /* CatalogLogicTests.swift in Sources */,
+				AA0000F600000000000001 /* ProcessedWriteForensicsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

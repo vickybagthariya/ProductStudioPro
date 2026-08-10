@@ -2,9 +2,9 @@ import SwiftUI
 
 // MARK: - Shared button chrome
 
-private enum PSButtonMetrics {
-    static let primaryVerticalPadding: CGFloat = 15
-    static let secondaryVerticalPadding: CGFloat = 13
+enum PSButtonMetrics {
+    /// Shared height for primary + secondary action pairs (Capture / Import, etc.).
+    static let actionVerticalPadding: CGFloat = 15
     static let ghostVerticalPadding: CGFloat = 11
     static let horizontalPadding: CGFloat = PSDesignSpacing.md
     static let iconSpacing: CGFloat = PSDesignSpacing.sm
@@ -75,7 +75,7 @@ struct PrimaryButton: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, PSButtonMetrics.primaryVerticalPadding)
+            .padding(.vertical, PSButtonMetrics.actionVerticalPadding)
             .padding(.horizontal, PSButtonMetrics.horizontalPadding)
         }
         .buttonStyle(PSPrimaryButtonStyle())
@@ -84,7 +84,7 @@ struct PrimaryButton: View {
     }
 }
 
-private struct PSPrimaryButtonStyle: ButtonStyle {
+struct PSPrimaryButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var colorScheme
 
     func makeBody(configuration: Configuration) -> some View {
@@ -148,7 +148,7 @@ struct SecondaryButton: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, PSButtonMetrics.secondaryVerticalPadding)
+            .padding(.vertical, PSButtonMetrics.actionVerticalPadding)
             .padding(.horizontal, PSButtonMetrics.horizontalPadding)
         }
         .buttonStyle(PSSecondaryButtonStyle())
@@ -156,10 +156,11 @@ struct SecondaryButton: View {
     }
 }
 
-private struct PSSecondaryButtonStyle: ButtonStyle {
+/// Neutral bordered chrome — same metrics as ``PSPrimaryButtonStyle`` (width/height/radius/padding).
+struct PSSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.medium))
+            .font(.headline)
             .foregroundStyle(PSDesignColors.textPrimary)
             .background(
                 RoundedRectangle(cornerRadius: PSDesignRadius.md, style: .continuous)

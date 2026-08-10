@@ -35,37 +35,32 @@ struct HomeCreationCard: View {
                     }
                 )
 
+                // PhotosPicker must own the control; apply the same secondary chrome as SecondaryButton
+                // (no nested Background — that caused the double halo around Import Photos).
                 PhotosPicker(
                     selection: $selectedPhotoItems,
                     maxSelectionCount: 100,
                     matching: .images
                 ) {
-                    HStack(spacing: PSDesignSpacing.sm) {
+                    HStack(spacing: PSButtonMetrics.iconSpacing) {
                         if isImporting {
                             ProgressView()
                                 .progressViewStyle(.circular)
+                                .tint(PSDesignColors.textPrimary)
                                 .scaleEffect(0.85)
+                            Text("Importing…")
+                        } else {
+                            Label("Import Photos", systemImage: PSDesignIcons.importPhotos)
                         }
-                        Label(
-                            isImporting ? "Importing…" : "Import Photos",
-                            systemImage: PSDesignIcons.importPhotos
-                        )
-                        .font(.body.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 13)
                     }
-                    .foregroundStyle(PSDesignColors.textPrimary)
-                    .background(
-                        RoundedRectangle(cornerRadius: PSDesignRadius.md, style: .continuous)
-                            .fill(PSDesignColors.cardBackground)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PSDesignRadius.md, style: .continuous)
-                            .stroke(PSDesignColors.divider, lineWidth: 1)
-                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, PSButtonMetrics.actionVerticalPadding)
+                    .padding(.horizontal, PSButtonMetrics.horizontalPadding)
                 }
+                .buttonStyle(PSSecondaryButtonStyle())
                 .disabled(isImporting)
                 .opacity(isImporting ? PSDesignMotion.disabledOpacity : 1)
+                .accessibilityLabel(isImporting ? "Importing photos" : "Import Photos")
 
                 HomeMoreImportOptions(
                     sources: moreImportSources,

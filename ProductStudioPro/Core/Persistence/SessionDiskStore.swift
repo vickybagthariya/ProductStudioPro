@@ -332,15 +332,62 @@ enum SessionDiskStore {
     }
 
     /// Writes a single processed JPEG during bulk ops so memory-heavy full-queue saves are not needed mid-batch.
-    static func writeProcessedImage(_ image: UIImage, for id: UUID) {
+    static func writeProcessedImage(_ image: UIImage, for id: UUID, reason: String = "writeProcessedImage") {
+        // Never persist the RAM-eviction sentinel — that would destroy a good proc_*.jpg.
+        guard image !== CapturedProduct.diskBackedOriginalPlaceholder else {
+            #if DEBUG
+            let seq = ProcessedWriteForensics.beginWrite(
+                image: image,
+                productID: id,
+                reason: reason + " [BLOCKED_PLACEHOLDER]"
+            )
+            ProcessedWriteForensics.endWrite(
+                productID: id,
+                sequence: seq,
+                jpegData: nil,
+                decoded: nil,
+                diskReloaded: nil,
+                skippedAsPlaceholder: true
+            )
+            #endif
+            return
+        }
+
         let folder = baseFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = imageURL(id, original: false)
+        #if DEBUG
+        let seq = ProcessedWriteForensics.beginWrite(image: image, productID: id, reason: reason)
+        #endif
         let data = autoreleasepool {
             image.jpegDataForOpaqueExport(compressionQuality: 0.92)
         }
-        guard let data else { return }
+        guard let data else {
+            #if DEBUG
+            ProcessedWriteForensics.endWrite(
+                productID: id,
+                sequence: seq,
+                jpegData: nil,
+                decoded: nil,
+                diskReloaded: nil,
+                skippedAsPlaceholder: false
+            )
+            #endif
+            return
+        }
         try? data.write(to: url, options: .atomic)
+        #if DEBUG
+        let decoded = UIImage(data: data)
+        let reloaded = UIImage(contentsOfFile: url.path)
+        ProcessedWriteForensics.endWrite(
+            productID: id,
+            sequence: seq,
+            jpegData: data,
+            decoded: decoded,
+            diskReloaded: reloaded,
+            skippedAsPlaceholder: false
+        )
+        #endif
     }
 
     private static func imageURL(_ id: UUID, original: Bool) -> URL {
@@ -472,9 +519,33 @@ enum SessionDiskStore {
         }
     }
 
+    /// Processed JPEG bytes for disk write — reads existing file when RAM was evicted
+    /// (mirrors `encodedOriginalData`). Re-encoding the 1×1 placeholder would overwrite a good `proc_*.jpg`.
     private static func encodedProcessedData(for product: CapturedProduct) -> Data? {
         autoreleasepool {
-            product.image.jpegDataForOpaqueExport(compressionQuality: 0.92)
+            if product.isProcessedEvicted {
+                #if DEBUG
+                NSLog(
+                    "[ProcessedWriteForensics] encodedProcessedData REUSE_DISK id=%@ (processed evicted — skip re-encode)",
+                    product.id.uuidString
+                )
+                #endif
+                guard let url = processedImageFileURL(for: product.id) else { return nil }
+                return try? Data(contentsOf: url)
+            }
+            if product.image === CapturedProduct.diskBackedOriginalPlaceholder {
+                return nil
+            }
+            #if DEBUG
+            ProcessedWriteForensics.recordBoundary(
+                .jpegInput,
+                image: product.image,
+                productID: product.id,
+                reason: "encodedProcessedData",
+                product: product
+            )
+            #endif
+            return product.image.jpegDataForOpaqueExport(compressionQuality: 0.92)
         }
     }
 
@@ -519,6 +590,9 @@ enum SessionDiskStore {
                         if !writeDataAtomically(d, to: procURL, failureMessage: "Couldn’t save a processed photo to disk.") {
                             wroteAnyFailure = true
                         }
+                        #if DEBUG
+                        Self.debugTraceEncodedProcWrite(data: d, id: record.id, reason: "saveQueue/writeSnapshot", diskURL: procURL)
+                        #endif
                     }
                     records.append(record)
                 }
@@ -571,7 +645,8 @@ enum SessionDiskStore {
 
         let snapshot = products.map { product -> (PersistedProduct, Data?) in
             let record = persistedRecord(from: product)
-            let procData = autoreleasepool { product.image.jpegDataForOpaqueExport(compressionQuality: 0.92) }
+            // Use eviction-safe encoder (must not re-encode the RAM placeholder).
+            let procData = encodedProcessedData(for: product)
             return (record, procData)
         }
 
@@ -593,6 +668,9 @@ enum SessionDiskStore {
                 keepFilenames.insert(procURL.lastPathComponent)
                 if let d = procData {
                     _ = writeDataAtomically(d, to: procURL, failureMessage: "Couldn’t save a processed photo to disk.")
+                    #if DEBUG
+                    Self.debugTraceEncodedProcWrite(data: d, id: record.id, reason: "saveManifestAndProcessedImages", diskURL: procURL)
+                    #endif
                 }
                 records.append(record)
             }
@@ -671,6 +749,9 @@ enum SessionDiskStore {
                 }
                 if let d = procData {
                     try? d.write(to: procURL, options: .atomic)
+                    #if DEBUG
+                    Self.debugTraceEncodedProcWrite(data: d, id: record.id, reason: "appendProductAndManifest", diskURL: procURL)
+                    #endif
                 }
 
                 generationLock.lock()
@@ -688,6 +769,25 @@ enum SessionDiskStore {
             }
         }
     }
+
+    #if DEBUG
+    /// Fingerprints post-encode decode (+ disk reload). `JPEG_INPUT` was already recorded
+    /// in `encodedProcessedData` for the pre-encode UIImage — do not relabel the decode as input.
+    private static func debugTraceEncodedProcWrite(data: Data, id: UUID, reason: String, diskURL: URL) {
+        guard let decoded = UIImage(data: data) else { return }
+        let reloaded = UIImage(contentsOfFile: diskURL.path)
+        let placeholder = decoded === CapturedProduct.diskBackedOriginalPlaceholder
+            || (decoded.size.width <= 2 && decoded.size.height <= 2)
+        _ = ProcessedWriteForensics.recordPostEncodeWrite(
+            jpegData: data,
+            decoded: decoded,
+            productID: id,
+            reason: reason,
+            diskReloaded: reloaded,
+            skippedAsPlaceholder: placeholder
+        )
+    }
+    #endif
 
     /// Blocks until the queue snapshot is fully written — used before backgrounding or termination.
     static func saveQueueAndWait(_ products: [CapturedProduct], generation: UInt64, pruneStaleFiles: Bool = true) {

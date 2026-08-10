@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
 struct HistogramDockRow: View {
     let snapshot: ExposureHistogramSnapshot
@@ -223,6 +224,20 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+// MARK: - Queue display naming
+
+/// Display-only helper so session titles never read as "… Queue Queue".
+enum QueueDisplayNaming {
+    static func queueTitle(forSessionName name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Queue" }
+        if trimmed.range(of: #"\bqueue\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return trimmed
+        }
+        return "\(trimmed) Queue"
+    }
+}
+
 // MARK: - Queue dashboard filters
 
 enum QueueDashboardFilter: String, CaseIterable, Identifiable {
@@ -259,6 +274,7 @@ enum QueueDashboardFilter: String, CaseIterable, Identifiable {
 /// Queue quality attention issues — detection not implemented yet.
 enum QueueQualityIssue: String, CaseIterable, Identifiable {
     case incompleteBackgroundRemoval
+    case additionalSubjectRemaining
     case blur
     case poorLighting
     case poorImageQuality
@@ -272,6 +288,7 @@ enum QueueQualityIssue: String, CaseIterable, Identifiable {
     var accessibilityLabel: String {
         switch self {
         case .incompleteBackgroundRemoval: return "Background not fully removed"
+        case .additionalSubjectRemaining: return "Additional subject may remain"
         case .blur: return "Blur detected"
         case .poorLighting: return "Poor lighting"
         case .poorImageQuality: return "Poor image quality"
@@ -321,19 +338,115 @@ struct QueueDashboardFilterRow: View {
                         selectedFilter = filter
                     }
                 }
-                CategoryChip(title: "+")
+
+                // Visually secondary — not a fifth filter chip.
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PSDesignColors.textTertiary)
+                    .frame(width: 28, height: 28)
+                    .background(PSDesignColors.elevatedBackground.opacity(0.55), in: Circle())
+                    .overlay(Circle().stroke(PSDesignColors.divider.opacity(0.7), lineWidth: 1))
+                    .padding(.leading, PSDesignSpacing.xs)
                     .accessibilityLabel("Custom filters")
                     .accessibilityHint("Coming soon")
-                    .opacity(0.55)
+                    .accessibilityAddTraits(.isButton)
+                    .opacity(0.7)
             }
         }
         .accessibilityElement(children: .contain)
     }
 }
 
+// MARK: - Add to session sheet
+
+/// Capture / import entry points for the current session (does not create a new session).
+struct QueueAddToSessionSheet: View {
+    let sessionDisplayName: String
+    let isImporting: Bool
+    @Binding var selectedPhotoItems: [PhotosPickerItem]
+    var onImportFiles: () -> Void
+    var onImportURL: () -> Void
+    var onImportClipboard: () -> Void
+    var onSingleCapture: () -> Void
+    var onBatchCapture: () -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 100, matching: .images) {
+                        Label(isImporting ? "Importing Photos…" : "Photos", systemImage: "photo.on.rectangle")
+                    }
+                    .disabled(isImporting)
+
+                    Button {
+                        onDismiss()
+                        onImportFiles()
+                    } label: {
+                        Label("Files", systemImage: "folder")
+                    }
+                    .disabled(isImporting)
+
+                    Button {
+                        onDismiss()
+                        onImportURL()
+                    } label: {
+                        Label("URL", systemImage: "link")
+                    }
+                    .disabled(isImporting)
+
+                    Button {
+                        onDismiss()
+                        onImportClipboard()
+                    } label: {
+                        Label("Clipboard", systemImage: "doc.on.clipboard")
+                    }
+                    .disabled(isImporting)
+                } header: {
+                    Text("Import")
+                }
+
+                Section {
+                    Button {
+                        onDismiss()
+                        onSingleCapture()
+                    } label: {
+                        Label("Single Capture", systemImage: "camera")
+                    }
+
+                    Button {
+                        onDismiss()
+                        onBatchCapture()
+                    } label: {
+                        Label("Batch Capture", systemImage: "square.stack")
+                    }
+                } header: {
+                    Text("Capture")
+                } footer: {
+                    Text("Adds items to \(sessionDisplayName). Does not create a new session.")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .environment(\.defaultMinListRowHeight, 44)
+            .navigationTitle("Add to \(sessionDisplayName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onDismiss)
+                        .foregroundStyle(DS.ColorToken.accent)
+                }
+                .dsHideToolbarSharedBackground()
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
 // MARK: - Bulk selection bar
 
-/// Selection summary + Grouped Cover + Folder / All / bulk menu (UI only).
+/// Selection summary + Create Grouped Cover + Folder / All / bulk menu (UI only).
 struct QueueBulkSelectionBar: View {
     let selectedCount: Int
     let showGroupedCover: Bool
@@ -350,11 +463,14 @@ struct QueueBulkSelectionBar: View {
         VStack(spacing: PSDesignSpacing.sm) {
             if showGroupedCover {
                 Button(action: onGroupedCover) {
-                    Label("Grouped Cover", systemImage: "square.grid.2x2")
+                    Label("Create Grouped Cover", systemImage: "square.grid.2x2")
+                        .font(.system(size: 16, weight: .semibold))
                         .labelStyle(.titleAndIcon)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
-                .buttonStyle(CompactPrimaryButtonStyle())
+                .buttonStyle(PrimaryButtonStyle())
+                .accessibilityLabel("Create Grouped Cover")
             }
 
             HStack(spacing: PSDesignSpacing.sm) {

@@ -12,8 +12,6 @@ struct CaptureFlowView: View {
     @State private var workflowKind: CaptureWorkflowKind?
     @State private var hasConfirmedWorkflow = false
     @State private var skippedWorkflowSelection = false
-    @State private var enteredViaMultiAngleShortcut = false
-    @State private var showMultiAngleHomeSetup = false
     @State private var showNativeCamera = false
     @State private var showScanner = false
     @State private var showAddedToast = false
@@ -158,11 +156,7 @@ struct CaptureFlowView: View {
                             .padding(.bottom, PSDesignSpacing.xs)
                     }
 
-                    if showMultiAngleHomeSetup {
-                        CaptureMultiAngleSetupSection(selectedCaptureMode: $selectedCaptureMode) {
-                            confirmMultiAngleHomeSetup()
-                        }
-                    } else if !hasConfirmedWorkflow {
+                    if !hasConfirmedWorkflow {
                         CaptureWorkflowSelectionSection(
                             selectedWorkflow: $workflowKind,
                             selectedCaptureMode: $selectedCaptureMode,
@@ -422,17 +416,8 @@ struct CaptureFlowView: View {
             hasConfirmedWorkflow = false
             resetIdentificationState()
             session.startNextProduct()
-
-            if enteredViaMultiAngleShortcut {
-                showMultiAngleHomeSetup = true
-                selectedCaptureMode = nil
-                session.multiAngleEnabled = true
-                session.enabledAngles = ProductAngle.captureAngles
-            } else {
-                showMultiAngleHomeSetup = false
-                selectedCaptureMode = nil
-                session.multiAngleEnabled = false
-            }
+            selectedCaptureMode = nil
+            session.multiAngleEnabled = false
         }
     }
 
@@ -488,17 +473,6 @@ struct CaptureFlowView: View {
             return
         }
 
-        if session.consumeMultiAngleHomeShortcut() {
-            workflowKind = .multiAngle
-            enteredViaMultiAngleShortcut = true
-            selectedCaptureMode = nil
-            activeMode = .single
-            showMultiAngleHomeSetup = true
-            session.multiAngleEnabled = true
-            session.enabledAngles = ProductAngle.captureAngles
-            return
-        }
-
         selectedCaptureMode = nil
         session.multiAngleEnabled = false
         resetCaptureStatusText()
@@ -524,22 +498,6 @@ struct CaptureFlowView: View {
 
         if activeMode == .batch {
             prepareBatchSession(promptIfNeeded: !skipBatchPrompt)
-        }
-    }
-
-    private func confirmMultiAngleHomeSetup() {
-        guard let mode = selectedCaptureMode else { return }
-        InteractionHaptics.tap(vibrate: session.vibrateEnabled)
-        activeMode = mode
-        showMultiAngleHomeSetup = false
-        session.multiAngleEnabled = true
-        session.enabledAngles = ProductAngle.captureAngles
-        session.captureMode = activeMode
-        session.beginCaptureFlow(mode: activeMode)
-        hasConfirmedWorkflow = true
-        instruction = startInstruction
-        if activeMode == .batch {
-            prepareBatchSession(promptIfNeeded: true)
         }
     }
 

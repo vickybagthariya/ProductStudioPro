@@ -15,7 +15,7 @@ struct ExportShareOptionsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(DS.TypeScale.sectionTitle)
                     .foregroundStyle(DS.ColorToken.label)
@@ -26,41 +26,15 @@ struct ExportShareOptionsSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DS.Space.screenHorizontal)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
 
-            ScrollView {
-                VStack(spacing: 10) {
-                    shareOptionButton(
-                        title: "ZIP export",
-                        subtitle: isSingleImage ? "Images, CSV, and manifest in one archive" : "All selected images in one ZIP",
-                        systemImage: "doc.zipper",
-                        emphasis: .primary,
-                        action: onZip
-                    )
-                    shareOptionButton(
-                        title: isSingleImage ? "JPG image…" : "JPG images…",
-                        subtitle: "Optional CSV on the next step",
-                        systemImage: "photo",
-                        emphasis: .secondary,
-                        action: onJPG
-                    )
-                    shareOptionButton(
-                        title: isSingleImage ? "PNG transparent cutout…" : "PNG transparent cutouts…",
-                        subtitle: "Keeps transparency when backgrounds were removed",
-                        systemImage: "circle.dashed",
-                        emphasis: .secondary,
-                        action: onPNG
-                    )
-                    shareOptionButton(
-                        title: "CSV only",
-                        subtitle: "Inventory list without images",
-                        systemImage: "tablecells",
-                        emphasis: .secondary,
-                        action: onCSV
-                    )
+            ViewThatFits(in: .vertical) {
+                optionsStack
+                ScrollView {
+                    optionsStack
                 }
-                .padding(.horizontal, DS.Space.screenHorizontal)
+                .scrollIndicators(.hidden)
             }
 
             Button {
@@ -69,19 +43,62 @@ struct ExportShareOptionsSheet: View {
             } label: {
                 Text("Cancel")
                     .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DS.ColorToken.label)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
+                    .frame(height: 52)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                            .fill(DS.ColorToken.backgroundTertiary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                            .stroke(DS.ColorToken.separator, lineWidth: 1)
+                    )
             }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FeedbackPressButtonStyle(pressedScale: DS.Motion.pressScaleCompact, playsHaptic: true))
             .padding(.horizontal, DS.Space.screenHorizontal)
-            .padding(.top, 8)
-            .padding(.bottom, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity)
         .background(DS.ColorToken.backgroundSecondary)
-        .presentationDetents([.height(420)])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(22)
+    }
+
+    private var optionsStack: some View {
+        VStack(spacing: 8) {
+            shareOptionButton(
+                title: "ZIP export",
+                subtitle: isSingleImage ? "Images, CSV, and manifest in one archive" : "All selected images in one ZIP",
+                systemImage: "doc.zipper",
+                emphasis: .primary,
+                action: onZip
+            )
+            shareOptionButton(
+                title: isSingleImage ? "JPG image…" : "JPG images…",
+                subtitle: "Optional CSV on the next step",
+                systemImage: "photo",
+                emphasis: .secondary,
+                action: onJPG
+            )
+            shareOptionButton(
+                title: isSingleImage ? "PNG transparent cutout…" : "PNG transparent cutouts…",
+                subtitle: "Keeps transparency when backgrounds were removed",
+                systemImage: "circle.dashed",
+                emphasis: .secondary,
+                action: onPNG
+            )
+            shareOptionButton(
+                title: "CSV only",
+                subtitle: "Inventory list without images",
+                systemImage: "tablecells",
+                emphasis: .secondary,
+                action: onCSV
+            )
+        }
+        .padding(.horizontal, DS.Space.screenHorizontal)
     }
 
     private enum Emphasis {
@@ -102,14 +119,16 @@ struct ExportShareOptionsSheet: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 28)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                     Text(subtitle)
                         .font(DS.TypeScale.micro)
                         .opacity(0.85)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
@@ -117,9 +136,9 @@ struct ExportShareOptionsSheet: View {
                     .opacity(0.45)
             }
             .foregroundStyle(emphasis == .primary ? DS.ColorToken.onAccent : DS.ColorToken.label)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                     .fill(emphasis == .primary ? DS.ColorToken.primaryButtonFill : DS.ColorToken.backgroundTertiary)

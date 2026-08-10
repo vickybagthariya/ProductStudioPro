@@ -75,14 +75,6 @@ struct HomeView: View {
 
                     HomeWorkflowPresetSection(session: session)
 
-                    HomeWorkflowShortcuts(
-                        onBatchCapture: { navigate(to: .batchCapture) },
-                        onMultiAngleCapture: {
-                            session.prepareMultiAngleCaptureFromHome()
-                            navigate(to: .singleCapture)
-                        }
-                    )
-
                     HomeContinueWorkingSection(
                         items: recentItems,
                         onSeeAll: { navigate(to: .queue) },

@@ -107,7 +107,11 @@ struct GroupedCoverEditorBridge: UIViewControllerRepresentable {
         }
 
         func setProcessingMessage(_ message: String?) {
-            processingMessage.wrappedValue = message
+            // UIKit can call this during appearance/layout; defer so SwiftUI
+            // is not mutated mid view-update.
+            DispatchQueue.main.async { [processingMessage] in
+                processingMessage.wrappedValue = message
+            }
         }
     }
 }

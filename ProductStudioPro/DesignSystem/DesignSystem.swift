@@ -127,7 +127,7 @@ enum AppScreenLayout {
     case listBody
 }
 
-struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View>: View {
+struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View, TitleTrailing: View>: View {
     var title: String
     var subtitle: String?
     var showsHome: Bool = true
@@ -137,8 +137,11 @@ struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View>: Vi
     var onHome: (() -> Void)?
     var layout: AppScreenLayout = .scroll
     var usesLargeTitle: Bool = false
+    /// When false, subtitle renders as plain secondary text (not a capsule chip).
+    var usesAccentSubtitleChip: Bool = true
     var scrollDismissesKeyboardInteractively: Bool = false
     @ViewBuilder var headerAccessory: () -> HeaderAccessory
+    @ViewBuilder var titleTrailingAccessory: () -> TitleTrailing
     @ViewBuilder var footer: () -> Footer
     @ViewBuilder var content: () -> Content
 
@@ -151,8 +154,10 @@ struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View>: Vi
         onHome: (() -> Void)? = nil,
         layout: AppScreenLayout = .scroll,
         usesLargeTitle: Bool = false,
+        usesAccentSubtitleChip: Bool = true,
         scrollDismissesKeyboardInteractively: Bool = false,
         @ViewBuilder headerAccessory: @escaping () -> HeaderAccessory = { EmptyView() },
+        @ViewBuilder titleTrailingAccessory: @escaping () -> TitleTrailing = { EmptyView() },
         @ViewBuilder content: @escaping () -> Content,
         @ViewBuilder footer: @escaping () -> Footer = { EmptyView() }
     ) {
@@ -164,8 +169,10 @@ struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View>: Vi
         self.onHome = onHome
         self.layout = layout
         self.usesLargeTitle = usesLargeTitle
+        self.usesAccentSubtitleChip = usesAccentSubtitleChip
         self.scrollDismissesKeyboardInteractively = scrollDismissesKeyboardInteractively
         self.headerAccessory = headerAccessory
+        self.titleTrailingAccessory = titleTrailingAccessory
         self.content = content
         self.footer = footer
     }
@@ -204,15 +211,29 @@ struct AppScreenScaffold<Content: View, Footer: View, HeaderAccessory: View>: Vi
             if onBack != nil || onHome != nil {
                 navigationControls
             }
-            VStack(alignment: .leading, spacing: DS.Space.tight) {
-                Text(title)
-                    .font(usesLargeTitle ? DS.TypeScale.screenTitle : DS.TypeScale.pageTitle)
-                    .foregroundStyle(DS.ColorToken.label)
-                if let subtitle {
-                    DSAccentSubtitleChip(text: subtitle)
+            HStack(alignment: .top, spacing: DS.Space.tight) {
+                VStack(alignment: .leading, spacing: usesAccentSubtitleChip ? DS.Space.tight : 4) {
+                    Text(title)
+                        .font(usesLargeTitle ? DS.TypeScale.screenTitle : DS.TypeScale.pageTitle)
+                        .foregroundStyle(DS.ColorToken.label)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                    if let subtitle {
+                        if usesAccentSubtitleChip {
+                            DSAccentSubtitleChip(text: subtitle)
+                        } else {
+                            Text(subtitle)
+                                .font(DS.TypeScale.caption)
+                                .foregroundStyle(DS.ColorToken.secondaryLabel)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.isStaticText)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                titleTrailingAccessory()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DS.Space.screenHorizontal)

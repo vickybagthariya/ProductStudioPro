@@ -23,6 +23,11 @@ enum ImageProcessor {
     /// Optional UI hook for Vision / pipeline failures (wired by `AppOperationalAlerts`).
     static var onOperationalFailure: ((String) -> Void)?
 
+    /// When `true`, runs `AIPolishEngine.preComposite` on the source before Vision/cutout.
+    /// When `false`, Vision runs on the (downsampled) source directly.
+    /// `postComposite` polish and `finishPhotoExportTuning` are unaffected either way.
+    static var appliesPreCompositePolishBeforeCutout: Bool = false
+
     /// Shared GPU-backed context — avoid allocating a new CIContext per filter pass.
     static let sharedCIContext: CIContext = {
         CIContext(options: [
@@ -737,7 +742,10 @@ enum ImageProcessor {
         let fillSpec = backgroundFillSpec ?? BackgroundFillSpec.fromLegacy(style: backgroundStyle, hexes: gradientColorHexes)
         let resolvedStudioShadow = polishEnabled ? SoftSyntheticShadowSettings.off : studioShadow
         let capped = downsampleIfNeededForImportPipeline(image, maxLongEdgePixels: maxSourceLongEdge)
-        let input = polishEnabled ? AIPolishEngine.enhance(capped, pass: .preComposite) : capped
+        let input: UIImage = {
+            guard polishEnabled, appliesPreCompositePolishBeforeCutout else { return capped }
+            return AIPolishEngine.enhance(capped, pass: .preComposite)
+        }()
         let layoutFill = effectiveLayoutFillRatio(
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight,
@@ -1342,7 +1350,10 @@ enum ImageProcessor {
     }
 
     static func subjectOnWhiteSquare(_ subject: UIImage, canvasWidth: Int = 1200, canvasHeight: Int = 1200, fillRatio: Double = 0.95, mode: PhotoEnhancementMode = .standardClean, strength: StudioAIStrength = .strong, backgroundColor: UIColor = .white, secondaryBackgroundColor: UIColor = UIColor(white: 0.94, alpha: 1.0), backgroundStyle: BackgroundCanvasStyle = .solid, gradientColorHexes: [String] = ["#FFFFFF"], backgroundFillSpec: BackgroundFillSpec? = nil, subjectRotationDegrees: Double = 0, flipHorizontal: Bool = false, flipVertical: Bool = false, studioShadow: SoftSyntheticShadowSettings = .studioDefault) -> UIImage {
-        let cleaned = cleanupTransparentEdges(subject, mode: mode, strength: strength)
+        // Match Grouped Cover matte policy: scrub fringe without boosting mid-alphas.
+        // (Legacy cleanupTransparentEdges mid-alpha +10 made dark edge RGB more opaque on white.)
+        _ = mode
+        let cleaned = scrubCutoutMatteFringe(subject)
         let cropped = cropTransparentMargins(cleaned) ?? cleaned
         return drawImageOnCanvas(cropped, canvasWidth: canvasWidth, canvasHeight: canvasHeight, fillRatio: fillRatio, strength: strength, backgroundColor: backgroundColor, secondaryBackgroundColor: secondaryBackgroundColor, backgroundStyle: backgroundStyle, gradientColorHexes: gradientColorHexes, backgroundFillSpec: backgroundFillSpec, subjectRotationDegrees: subjectRotationDegrees, flipHorizontal: flipHorizontal, flipVertical: flipVertical, studioShadow: studioShadow)
     }
@@ -1801,7 +1812,22 @@ enum ImageProcessor {
         return controls.outputImage?.cropped(to: mask.extent) ?? mask
     }
 
-    private static func cleanupTransparentEdges(_ image: UIImage, mode: PhotoEnhancementMode, strength: StudioAIStrength) -> UIImage {
+    /// Legacy cutout edge tidy retained for debug comparison only.
+    ///
+    /// Catalog processing no longer calls this — mid-alpha boosting made dark fringe
+    /// pixels more opaque on white and muddied subject silhouettes versus Grouped Cover.
+    /// Prefer ``scrubCutoutMatteFringe`` for production matte cleaning.
+    ///
+    /// - Parameter boostMidAlpha: When `true`, restores the historical `alpha + 10` for
+    ///   alphas in `[18, 200)`. Defaults to `false` (clear weak alphas only).
+    private static func cleanupTransparentEdges(
+        _ image: UIImage,
+        mode: PhotoEnhancementMode,
+        strength: StudioAIStrength,
+        boostMidAlpha: Bool = false
+    ) -> UIImage {
+        _ = mode
+        _ = strength
         guard let cg = image.cgImage else { return image }
         let width = cg.width, height = cg.height
         let bytesPerPixel = 4, bytesPerRow = bytesPerPixel * width
@@ -1809,7 +1835,6 @@ enum ImageProcessor {
         guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Standard Clean gets a gentle edge tidy — fixes soft halo on the cutout corners.
         let transparentCutoff: UInt8 = 18
         let boostLimit: UInt8 = 200
         let alphaBoost: Int = 10
@@ -1820,7 +1845,7 @@ enum ImageProcessor {
                 let a = pixels[i + 3]
                 if a > 0 && a < transparentCutoff {
                     pixels[i + 3] = 0
-                } else if a >= transparentCutoff && a < boostLimit {
+                } else if boostMidAlpha, a >= transparentCutoff, a < boostLimit {
                     pixels[i + 3] = UInt8(min(255, Int(a) + alphaBoost))
                 }
             }

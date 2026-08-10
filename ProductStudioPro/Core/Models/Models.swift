@@ -1531,7 +1531,11 @@ final class CaptureSessionStore: ObservableObject {
             guard index >= keep else { return product }
             guard !product.isProcessedEvicted else { return product }
             if SessionDiskStore.processedImageFileURL(for: product.id) == nil {
-                SessionDiskStore.writeProcessedImage(product.image, for: product.id)
+                SessionDiskStore.writeProcessedImage(
+                    product.image,
+                    for: product.id,
+                    reason: "evictStaleProcessedImagesFromMemory.ensureOnDisk"
+                )
             }
             guard SessionDiskStore.processedImageFileURL(for: product.id) != nil else { return product }
             changed = true
@@ -2611,12 +2615,28 @@ final class CaptureSessionStore: ObservableObject {
                 )
 
                 await Task.detached(priority: .utility) {
-                    autoreleasepool { SessionDiskStore.writeProcessedImage(processed.image, for: id) }
+                    autoreleasepool {
+                        SessionDiskStore.writeProcessedImage(processed.image, for: id, reason: "matchLook")
+                    }
                 }.value
 
                 guard let i = products.firstIndex(where: { $0.id == id }) else { continue }
                 let p = products[i]
                 ImageProcessor.invalidateCutoutCache(productID: id)
+                #if DEBUG
+                ProcessedWriteForensics.recordFinalRender(
+                    image: processed.image,
+                    productID: id,
+                    reason: "matchLook",
+                    product: p
+                )
+                ProcessedWriteForensics.recordAssignment(
+                    image: processed.image,
+                    productID: id,
+                    reason: "matchLook",
+                    product: p
+                )
+                #endif
                 products[i] = CapturedProduct(
                     id: p.id,
                     sequence: p.sequence,
@@ -2678,8 +2698,22 @@ final class CaptureSessionStore: ObservableObject {
                 defer { self.popBlockingOperation() }
                 guard let i = self.products.firstIndex(where: { $0.id == productId }) else { return }
                 let cur = self.products[i]
+                #if DEBUG
+                ProcessedWriteForensics.recordFinalRender(
+                    image: refined,
+                    productID: productId,
+                    reason: "applyDefringeSharpen",
+                    product: cur
+                )
+                ProcessedWriteForensics.recordAssignment(
+                    image: refined,
+                    productID: productId,
+                    reason: "applyDefringeSharpen",
+                    product: cur
+                )
+                #endif
                 self.products[i] = cur.replacingProcessedImage(refined)
-                SessionDiskStore.writeProcessedImage(refined, for: productId)
+                SessionDiskStore.writeProcessedImage(refined, for: productId, reason: "applyDefringeSharpen")
                 StylePreviewCacheRevisionStore.shared.invalidate(productID: productId, reason: "defringe")
                 QueueRowThumbnailCache.removeAll()
             }
@@ -2742,23 +2776,6 @@ final class CaptureSessionStore: ObservableObject {
         currentAngleIndex = 0
         clearPendingMultiAngleCaptures()
         selectedAngle = multiAngleEnabled ? currentCaptureAngle : .none
-    }
-
-    /// Set when Home's Multi-Angle shortcut opens capture — consumed once by `CaptureFlowView`.
-    @Published var openedViaMultiAngleHomeShortcut = false
-
-    /// Enables multi-angle capture and resets in-progress state before opening capture from Home.
-    func prepareMultiAngleCaptureFromHome() {
-        openedViaMultiAngleHomeShortcut = true
-        multiAngleEnabled = true
-        enabledAngles = ProductAngle.captureAngles
-        startNextProduct()
-    }
-
-    /// Returns whether capture was opened from Home's Multi-Angle shortcut and clears the flag.
-    func consumeMultiAngleHomeShortcut() -> Bool {
-        defer { openedViaMultiAngleHomeShortcut = false }
-        return openedViaMultiAngleHomeShortcut
     }
 
     func clearPendingMultiAngleCaptures() {
@@ -3009,6 +3026,18 @@ final class CaptureSessionStore: ObservableObject {
         }) {
             let existingID = products[idx].id
             ImageProcessor.invalidateCutoutCache(productID: existingID)
+            #if DEBUG
+            ProcessedWriteForensics.recordFinalRender(
+                image: processed.image,
+                productID: existingID,
+                reason: "insertQueuedCapture.replaceExisting"
+            )
+            ProcessedWriteForensics.recordAssignment(
+                image: styledImage,
+                productID: existingID,
+                reason: "insertQueuedCapture.replaceExisting"
+            )
+            #endif
             products[idx] = CapturedProduct(
                 id: existingID,
                 sequence: products[idx].sequence,
@@ -3037,6 +3066,18 @@ final class CaptureSessionStore: ObservableObject {
             return existingID
         } else {
             let newID = UUID()
+            #if DEBUG
+            ProcessedWriteForensics.recordFinalRender(
+                image: processed.image,
+                productID: newID,
+                reason: "insertQueuedCapture.new"
+            )
+            ProcessedWriteForensics.recordAssignment(
+                image: styledImage,
+                productID: newID,
+                reason: "insertQueuedCapture.new"
+            )
+            #endif
             products.insert(
                 CapturedProduct(
                     id: newID,
@@ -3430,8 +3471,22 @@ final class CaptureSessionStore: ObservableObject {
             )
         }()
         let fillData = BackgroundFillSpec.fromLegacy(style: backgroundCanvasStyle, hexes: gradientColorHexes).encodedData()
+        let newID = UUID()
+        #if DEBUG
+        ProcessedWriteForensics.recordFinalRender(
+            image: processedImage,
+            productID: newID,
+            reason: "appendImportedProcessedImage"
+        )
+        ProcessedWriteForensics.recordAssignment(
+            image: styledImage,
+            productID: newID,
+            reason: "appendImportedProcessedImage"
+        )
+        #endif
         products.insert(
             CapturedProduct(
+                id: newID,
                 sequence: nextSequence,
                 upc: identifier,
                 angle: .none,
@@ -3640,12 +3695,28 @@ final class CaptureSessionStore: ObservableObject {
                 if Task.isCancelled { break }
 
                 await Task.detached(priority: .utility) {
-                    autoreleasepool { SessionDiskStore.writeProcessedImage(processed.image, for: id) }
+                    autoreleasepool {
+                        SessionDiskStore.writeProcessedImage(processed.image, for: id, reason: "bulkReprocess")
+                    }
                 }.value
 
                 guard let i = products.firstIndex(where: { $0.id == id }) else { continue }
                 let p = products[i]
                 ImageProcessor.invalidateCutoutCache(productID: id)
+                #if DEBUG
+                ProcessedWriteForensics.recordFinalRender(
+                    image: processed.image,
+                    productID: id,
+                    reason: "bulkReprocess",
+                    product: p
+                )
+                ProcessedWriteForensics.recordAssignment(
+                    image: processed.image,
+                    productID: id,
+                    reason: "bulkReprocess",
+                    product: p
+                )
+                #endif
                 products[i] = CapturedProduct(
                     id: p.id,
                     sequence: p.sequence,
@@ -4028,6 +4099,20 @@ final class CaptureSessionStore: ObservableObject {
                     guard ImageProcessor.isValidExportBitmap(processed.image) else { return }
                     let p = self.products[i]
                     ImageProcessor.invalidateCutoutCache(productID: productId)
+                    #if DEBUG
+                    ProcessedWriteForensics.recordFinalRender(
+                        image: processed.image,
+                        productID: productId,
+                        reason: "reprocessProduct.apply",
+                        product: p
+                    )
+                    ProcessedWriteForensics.recordAssignment(
+                        image: processed.image,
+                        productID: productId,
+                        reason: "reprocessProduct.apply",
+                        product: p
+                    )
+                    #endif
                     self.products[i] = CapturedProduct(
                         id: p.id,
                         sequence: p.sequence,
@@ -4184,12 +4269,28 @@ final class CaptureSessionStore: ObservableObject {
                 )
 
                 await Task.detached(priority: .utility) {
-                    autoreleasepool { SessionDiskStore.writeProcessedImage(processed.image, for: item.id) }
+                    autoreleasepool {
+                        SessionDiskStore.writeProcessedImage(processed.image, for: item.id, reason: "brandMarkRestamp")
+                    }
                 }.value
 
                 guard let i = products.firstIndex(where: { $0.id == item.id }) else { continue }
                 let p = products[i]
                 ImageProcessor.invalidateCutoutCache(productID: item.id)
+                #if DEBUG
+                ProcessedWriteForensics.recordFinalRender(
+                    image: processed.image,
+                    productID: item.id,
+                    reason: "brandMarkRestamp",
+                    product: p
+                )
+                ProcessedWriteForensics.recordAssignment(
+                    image: processed.image,
+                    productID: item.id,
+                    reason: "brandMarkRestamp",
+                    product: p
+                )
+                #endif
                 products[i] = CapturedProduct(
                     id: p.id,
                     sequence: p.sequence,
@@ -4348,12 +4449,28 @@ final class CaptureSessionStore: ObservableObject {
                 )
 
                 await Task.detached(priority: .utility) {
-                    autoreleasepool { SessionDiskStore.writeProcessedImage(processed.image, for: id) }
+                    autoreleasepool {
+                        SessionDiskStore.writeProcessedImage(processed.image, for: id, reason: "resetProductsToOriginal")
+                    }
                 }.value
 
                 guard let i = products.firstIndex(where: { $0.id == id }) else { continue }
                 let p = products[i]
                 ImageProcessor.invalidateCutoutCache(productID: id)
+                #if DEBUG
+                ProcessedWriteForensics.recordFinalRender(
+                    image: processed.image,
+                    productID: id,
+                    reason: "resetProductsToOriginal",
+                    product: p
+                )
+                ProcessedWriteForensics.recordAssignment(
+                    image: processed.image,
+                    productID: id,
+                    reason: "resetProductsToOriginal",
+                    product: p
+                )
+                #endif
                 products[i] = CapturedProduct(
                     id: p.id,
                     sequence: p.sequence,
